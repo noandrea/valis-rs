@@ -1,167 +1,93 @@
 use ::valis::{self, Entity};
-use chrono::NaiveDate;
+use chrono::{Duration, NaiveDate};
 use simsearch::SimSearch;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufRead, LineWriter, Write};
 use std::path::Path;
+
+const TABLE_ENTITIES: &str = "ENTITIES";
+const TABLE_TAGS: &str = "TAGS";
+const TABLE_ACL: &str = "ACL";
+const TABLE_EDGES: &str = "EDGES";
+const TABLE_EVENTS: &str = "EVENTS";
+const TABLE_ACTIONS: &str = "ACTIONS";
 
 /// A simple datastore that can persist data on file
 ///
 pub struct DataStore {
-    data: HashMap<blake3::Hash, Entity>,
-    index: SimSearch<blake3::Hash>,
+    db: sled::Db,
 }
 impl DataStore {
     /// Initialize an empty datastore
     ///
-    pub fn new() -> DataStore {
-        DataStore {
-            data: HashMap::new(),
-            index: SimSearch::new(),
-        }
+    pub fn open(db_path: &Path) -> DataStore {
+        let db = sled::open(db_path).unwrap();
+        DataStore { db }
     }
-    /// Load the datastore with the records found
-    /// at log_file path
-    pub fn load(&mut self, log_file: &Path) -> Result<(), std::io::Error> {
-        // read path
-        if let Ok(lines) = DataStore::read_lines(log_file) {
-            for line in lines {
-                let record = line?;
-                if let Ok(tx) = Entity::from_str(&record) {
-                    let th = Self::hash(&tx);
-                    // index for search the title and the tags
-                    self.index.insert(
-                        th,
-                        &format!("{} {}", tx.get_name(), tx.get_tags().join(" ")),
-                    );
-                    // here is the move
-                    self.data.insert(th, tx);
-                }
-            }
-        }
-        Ok(())
-    }
-    /// Persist the datastore to disk, overwriting existing files
-    ///
-    /// The order of the item saved is random
-    pub fn save(&self, log_file: &Path) -> Result<(), std::io::Error> {
-        let mut file = LineWriter::new(File::create(log_file)?);
-        self.data.iter().for_each(|v| {
-            file.write(v.1.to_string().as_bytes()).ok();
-        });
-        file.flush()?;
-        Ok(())
-    }
-    /// Retrieve the cost of life for a date
-    ///
-    pub fn cost_of_life(&self, d: &NaiveDate) -> f32 {
-        0.0
-    }
+
+    pub fn close(&self) {}
+
+    pub fn export(file: &Path) {}
+    pub fn import(file: &Path) {}
+
     /// Perform a search for a string in tags and transaction name
     ///
-    pub fn search(&self, pattern: &str) -> Vec<(String, f32, f32, String, String, f32, String)> {
-        self.index
-            .search(pattern)
-            .iter()
-            .map(|h| {
-                let tx = self.data.get(h).unwrap();
-                (
-                    tx.get_name().to_string(),
-                    0.0,
-                    0.0,
-                    "".to_string(),
-                    "".to_string(),
-                    0.0,
-                    tx.get_tags().join("/"),
-                )
-            })
-            .collect()
+    pub fn search(&self, pattern: &str) -> Vec<Entity> {
+        vec![]
     }
-    /// Compile a summary of the active costs, returning a tuple with
-    /// (title, total amount, cost per day, percentage payed)
-    pub fn summary(&self, d: &NaiveDate) -> Vec<(String, f32, f32, f32)> {
-        let mut s = self
-            .data
-            .iter()
-            .filter(|(_k, v)| true)
-            .map(|(_k, v)| {
-                (
-                    String::from(v.get_name()),
-                    0.0,
-                    0.0,
-                    v.get_progress(&Some(*d)),
-                )
-            })
-            .collect::<Vec<(String, f32, f32, f32)>>();
-        // sort the results descending by completion
-        s.sort_by(|a, b| (b.3).partial_cmp(&a.3).unwrap());
-        s
-    }
+
     /// Return aggregation summary for tags
     ///
-    pub fn tags(&self, d: &NaiveDate) -> Vec<(String, usize, f32)> {
-        // counters here
-        let mut agg: HashMap<String, (usize, usize)> = HashMap::new();
-        // aggregate tags
-        self.data
-            .iter()
-            // .filter(|(_h, tx)| tx.is_active_on(d))
-            .for_each(|(_h, tx)| {
-                tx.get_tags().iter().for_each(|tg| {
-                    let (n, a) = match agg.get(tg) {
-                        Some((n, a)) => (n + 1, 1),
-                        None => (1, 1),
-                    };
-                    agg.insert(tg.to_string(), (n, a));
-                    // * agg.entry(*tg).or_insert((1, tx.per_diem())) +=(1, tx.per_diem());
-                });
-            });
-        // return
-        let mut s = agg
-            .iter()
-            .map(|(tag, v)| (tag.to_string(), v.0, 0.0))
-            .collect::<Vec<(String, usize, f32)>>();
-        // sort the results descending by count
-        s.sort_by(|a, b| (b.2).partial_cmp(&a.2).unwrap());
-        return s;
+    pub fn agenda(
+        &self,
+        since: &NaiveDate,
+        until: &NaiveDate,
+        limit: usize,
+        offset: usize,
+    ) -> Vec<Entity> {
+        let (s, u) = (since.to_string(), (*until - Duration::days(1)).to_string());
+        let prefix_str = valis::prefix(&s, &u);
+        // fetch all the stuff
+        let actions = self.db.open_tree(TABLE_ACTIONS).unwrap();
+        let entities = self.db.open_tree(TABLE_ENTITIES).unwrap();
+        actions
+            .scan_prefix(prefix_str)
+            .map(|r| {
+                let (_k, v) = r.unwrap();
+                let raw = entities.get(v).unwrap().unwrap();
+                bincode::deserialize(&raw).unwrap()
+            })
+            .collect::<Vec<Entity>>()
     }
-    /// Insert a new tx record
-    /// if the record exists returns the existing one
-    ///
-    /// TODO: handle duplicates more gracefully
-    pub fn insert(&mut self, tx: &Entity) -> Option<Entity> {
-        let th = Self::hash(tx);
-        // index for search the title and the tags
-        self.index.insert(
-            th,
-            &format!("{} {}", tx.get_name(), tx.get_tags().join(" ")),
-        );
-        self.data.insert(th, tx.clone())
+    /// Insert a new entity and associated data
+    pub fn insert(&mut self, entity: &Entity) {
+        // insert data
+        let k = bincode::serialize(&entity.uid).unwrap();
+        let v = bincode::serialize(entity).unwrap();
+        let index = self.db.open_tree(TABLE_ENTITIES).unwrap();
+        index.insert(k.clone(), v).expect("cannot insert entity");
+        // insert next action date
+        let index = self.db.open_tree(TABLE_ACTIONS).unwrap();
+        let ak = format!("{}:{}", entity.next_action_date, entity.uid.to_string());
+        index.insert(ak, k.clone());
+        // insert tags
+        let index = self.db.open_tree(TABLE_TAGS).unwrap();
+        entity.tags.iter().for_each(|(_ts, t)| {
+            let tk = format!("{}:{}", t.to_string(), entity.uid.to_string());
+            index.insert(tk, k.clone()).expect("cannot insert tag");
+        });
+        // insert relations
+        let index = self.db.open_tree(TABLE_EDGES).unwrap();
+        entity.relationships.iter().for_each(|r| {
+            let tk = format!("{}:{}", entity.uid.to_string(), r.kind.get_label());
+            index.insert(tk, k.clone()).expect("cannot insert edge");
+        });
+        // insert acl
+        let index = self.db.open_tree(TABLE_ACL).unwrap();
+        entity.visibility.iter().for_each(|a| {
+            let ak = format!("{}:{}", a, entity.uid.to_string());
+            index.insert(ak, k.clone()).expect("cannot insert acl");
+        })
     }
-    /// Get the size of the datastore
-    ///
-    /// # Arguments
-    ///
-    /// * `on` - A Option<chrono:NaiveDate> to filter for active transactions
-    ///
-    /// if the Option is None then the full size is returned
-    ///
-    pub fn size(&self, on: Option<NaiveDate>) -> usize {
-        match on {
-            Some(date) => self.summary(&date).len(),
-            None => self.data.len(),
-        }
-    }
-    // The output is wrapped in a Result to allow matching on errors
-    // Returns an Iterator to the Reader of the lines of the file.
-    fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-    where
-        P: AsRef<Path>,
-    {
-        let file = File::open(filename)?;
-        Ok(io::BufReader::new(file).lines())
-    }
+
     /// Compute the blake3 has for a Entity
     ///
     /// The hash is calculated on
@@ -178,7 +104,30 @@ impl DataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::valis::{self, Entity};
     #[test]
-    fn test_datastore() {}
+    fn test_datastore() {
+        let mut ds = DataStore::open(Path::new("private/testdb"));
+
+        let data = vec![
+            ("A", "person", "01.01.2021"),
+            ("B", "person", "02.01.2021"),
+            ("C", "person", "01.02.2021"),
+            ("D", "person", "02.02.2021"),
+        ];
+
+        data.iter().for_each(|(name, class, nad)| {
+            let mut e = Entity::from(name, class).unwrap();
+            e.next_action(valis::date_from_str(nad).unwrap(), "yea".to_string());
+            ds.insert(&e);
+        });
+
+        let a = ds.agenda(&valis::date(1, 1, 2021), &valis::date(2, 1, 2021), 0, 0);
+        assert_eq!(a.len(), 1);
+
+        let a = ds.agenda(&valis::date(1, 1, 2021), &valis::date(3, 1, 2021), 0, 0);
+        assert_eq!(a.len(), 2);
+
+        let a = ds.agenda(&valis::date(1, 1, 2021), &valis::date(3, 1, 2022), 0, 0);
+        assert_eq!(a.len(), 4);
+    }
 }

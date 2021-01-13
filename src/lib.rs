@@ -8,6 +8,7 @@
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate};
 use lazy_static::lazy_static;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use slug::slugify;
 use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
@@ -16,7 +17,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 mod utils;
-use utils::*;
+pub use utils::*;
 
 // Let's use generic errors
 type Result<T> = std::result::Result<T, ValisError>;
@@ -81,7 +82,7 @@ fn extract_lifetime(text: &str) -> (&str, i64, i64) {
 
 /// A time range with duration and repetition
 ///
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Lifetime {
     // amount, times
     SingleDay,
@@ -194,7 +195,7 @@ impl fmt::Display for Lifetime {
 /// - Active : the thing is a active in the context
 /// - Passive: the thing is not directly engaged in a context but somehow still present
 /// - Former: there isn't a connection anymore, with a date indicating when the connection was broken
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RelState {
     Root, // this would be the center of the application
     Active(NaiveDate, Option<NaiveDate>),
@@ -203,7 +204,7 @@ pub enum RelState {
     Disabled(NaiveDate, Option<NaiveDate>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Tag {
     Generic(String), // simple tag
     Feature(String), // wood, web design, sale, rust,
@@ -255,25 +256,65 @@ impl fmt::Display for Tag {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ACL {
-    Author,  //
+    Public,
     Sponsor, // message, email, webhook
     Limited(Tag),
 }
 
-#[derive(Debug, Clone)]
-pub enum EventType {
-    Log(String),            // created / updated
-    Action(String, String), // message, email, webhook
+impl fmt::Display for ACL {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Public => write!(f, "public"),
+            Self::Sponsor => write!(f, "sponsor"),
+            Self::Limited(tag) => write!(f, "{}", tag),
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+/// EventType describe an event
+///
+/// ### Log(Message)
+/// Describes a system event (eg. entity created, login, logout, etc)
+///
+/// ### Action(Source, Message, Weight)
+/// Describes an active action that triggered by an entity with an
+/// associated weight.
+///
+/// The weight is a positive number that is associated to an event and
+/// that is the used to compute the the ranking of the entities
+/// based on their activity (eg. for a chat message can be the number of char written)
+///  
+/// The other use for the weight (with the derived metric of event frequency)
+/// is to monitor entities activity to get alarms about trends.
+///
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum EventType {
+    Log(String),
+    Action(String, String, usize),
+}
+
+/// The Actor is a participant of an event
+///
+/// The Lead is the one triggering the action
+/// The Starring are entities mentioned of an action
+/// The Background are entities object of te action
+///
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Actor {
+    Lead(Uuid),
+    Starring(Uuid),
+    Background(Uuid),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Event {
     recorded_at: DateTime<FixedOffset>,
     kind: EventType,
     content: Option<String>,
-    author: uuid::Uuid,
+    // Entities
+    actors: Vec<Actor>,
     // ACL
     visibility: Vec<ACL>,
 }
@@ -282,9 +323,9 @@ impl Event {
     pub fn new() -> Event {
         Event {
             recorded_at: now_local(),
-            kind: EventType::Action("raw".to_string(), "msg".to_string()),
+            kind: EventType::Action("raw".to_string(), "msg".to_string(), 1),
             content: None,
-            author: Uuid::new_v4(),
+            actors: vec![Actor::Lead(Uuid::new_v4())],
             visibility: vec![],
         }
     }
@@ -293,7 +334,7 @@ impl Event {
 /// The RelQuality describes the quality of a relationship in a moment in time.
 ///
 /// it is bound to a thing and it's relative to the root entity
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RelQuality {
     Formal(NaiveDate, Option<NaiveDate>),   // businesslike
     Friendly(NaiveDate, Option<NaiveDate>), // actively friendly
@@ -301,26 +342,51 @@ pub enum RelQuality {
     Hostile(NaiveDate, Option<NaiveDate>),  // full out hostile
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RelType {
     Role(String, NaiveDate, Option<NaiveDate>), // this is the main context
-    Admin(NaiveDate, NaiveDate),                // not sure about this
     BelongsTo(NaiveDate, NaiveDate),            // this a context root
     MemberOf(NaiveDate, NaiveDate),             // indicate the context of the thing
 }
 
-#[derive(Debug, Clone)]
-pub struct Rel {
-    kind: RelType,
-    target: Uuid,
+impl RelType {
+    pub fn get_label(&self) -> String {
+        match self {
+            Self::Role(l, _s, _u) => format!("rl:{}", l),
+            Self::BelongsTo(_s, _u) => "bt".to_string(),
+            Self::MemberOf(_s, _u) => "mo".to_string(),
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
+impl PartialEq for RelType {
+    fn eq(&self, other: &Self) -> bool {
+        slugify(self.to_string()) == slugify(other.to_string())
+    }
+}
+
+impl fmt::Display for RelType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Role(l, s, u) => write!(f, "rl:{}:{:?}:{:?}", l, s, u),
+            Self::BelongsTo(s, u) => write!(f, "bt:{:?}:{:?}", s, u),
+            Self::MemberOf(s, u) => write!(f, "mo:{:?}:{:?}", s, u),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Rel {
+    pub kind: RelType,
+    pub target: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Entity {
-    uid: Uuid,
+    pub uid: Uuid,
     // descriptive
     pub name: String, // Ada, Kitchen Table, Google
-    tags: HashMap<String, Tag>,
+    pub tags: HashMap<String, Tag>,
     pub description: String,
     handles: HashMap<String, String>, // email, telegram, phone
     // contextual data
@@ -332,20 +398,20 @@ pub struct Entity {
     created_on: NaiveDate,
     updated_on: NaiveDate,
     // next action
-    next_action_date: NaiveDate, // in days
+    pub next_action_date: NaiveDate, // in days
     next_action_note: String,
     // relationships
-    relationships: Vec<Rel>,
-    // past events
-    events: Vec<Event>,
+    pub relationships: Vec<Rel>,
     // ACL
-    visibility: Vec<ACL>,
+    pub visibility: Vec<ACL>,
 }
 
 /// Holds a transaction information
 ///
 ///
 impl Entity {
+    pub fn bin(&self) {}
+
     // Getters
     pub fn get_name(&self) -> &str {
         &self.name[..]
@@ -391,6 +457,11 @@ impl Entity {
         y / n
     }
 
+    pub fn next_action(&mut self, date: NaiveDate, note: String) {
+        self.next_action_date = date;
+        self.next_action_note = note;
+    }
+
     /// Builds a Entity using parameters
     ///
     /// # Arguments
@@ -422,7 +493,6 @@ impl Entity {
         next_action_date: NaiveDate,
         next_action_note: &str,
         relationships: Vec<Rel>,
-        events: Vec<Event>,
         visibility: Vec<ACL>,
     ) -> Result<Entity> {
         let tx = Entity {
@@ -446,7 +516,6 @@ impl Entity {
             next_action_date,
             next_action_note: next_action_note.to_string(),
             relationships,
-            events,
             visibility,
         };
         Ok(tx)
@@ -468,7 +537,6 @@ impl Entity {
             today(),
             after(1),
             "to update",
-            vec![],
             vec![],
             vec![],
         )

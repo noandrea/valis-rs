@@ -19,7 +19,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "farcast";
 const APPLICATION: &str = "valis";
-const DB_FILENAME: &str = "valis.data.sled";
+const DB_FOLDER: &str = "data";
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     //println!("Welcome to CostOf.Life!");
@@ -87,13 +87,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     }
                 }
             }
-            p.data_dir().join(Path::new(DB_FILENAME))
+            p.data_dir().join(Path::new(DB_FOLDER))
         }
         None => panic!("cannot retrieve the config file dir"),
     };
     // load the datastores
-    let mut ds = DataStore::new();
-    ds.load(path.as_path())?;
+    let mut ds = DataStore::open(path.as_path());
     // command line
     match matches.subcommand() {
         Some(("add", c)) => {
@@ -103,7 +102,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 // check the values for
                 if c.is_present("non_interactive") {
                     ds.insert(&th);
-                    ds.save(path.as_path())?;
                     println!("done!");
                     return Ok(());
                 }
@@ -113,7 +111,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 match prompts::confirm("Do you want to add it?", Yes) {
                     Yes => {
                         ds.insert(&th);
-                        ds.save(path.as_path())?;
                         println!("done!")
                     }
                     No => println!("ok, another time"),
@@ -163,6 +160,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
         Some((&_, _)) | None => {}
     }
+
+    ds.close();
     Ok(())
 }
 

@@ -53,6 +53,18 @@ pub fn date_from_str(s: &str) -> Option<NaiveDate> {
     None
 }
 
+pub fn prefix(xs: &str, ys: &str) -> String {
+    // assert_eq!(xs.len(), 2);
+    // assert_eq!(ys.len(), 2);
+    let idx = xs
+        .as_bytes()
+        .iter()
+        .zip(ys.as_bytes())
+        .take_while(|(x, y)| x == y)
+        .count();
+    xs[0..idx].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +81,15 @@ mod tests {
             let (inputs, exp) = t;
             let (in_str, in_sep) = inputs;
             assert_eq!(split_once(in_str, *in_sep), *exp);
+        }
+        // prefix
+        let tests = vec![(("2020-10-01", "2020-10-02"), "2020-10-0")];
+
+        for (i, t) in tests.iter().enumerate() {
+            println!("Test#{}", i);
+            let (inputs, exp) = t;
+            let (a, b) = inputs;
+            assert_eq!(prefix(a, b), *exp);
         }
     }
 
