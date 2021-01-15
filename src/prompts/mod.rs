@@ -109,7 +109,7 @@ pub fn principal_entity() -> Entity {
         .unwrap();
     Entity::from(&name, "person")
         .unwrap()
-        .with_password(&Some(pass))
+        .with_password(Some(&pass))
 }
 
 pub fn root_entity() -> Entity {

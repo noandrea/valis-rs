@@ -223,19 +223,6 @@ impl DataStore {
         });
         Ok(entity.uid)
     }
-
-    /// Compute the blake3 has for a Entity
-    ///
-    /// The hash is calculated on
-    /// - name
-    /// - lifetime
-    /// - starts_on
-    /// - amount
-    ///
-    fn hash(tx: &Entity) -> blake3::Hash {
-        let fields = format!("{}", tx.get_name());
-        blake3::hash(fields.as_bytes())
-    }
 }
 #[cfg(test)]
 mod tests {

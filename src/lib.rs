@@ -440,6 +440,10 @@ impl Entity {
             .collect()
     }
 
+    pub fn get_pwd_hash(&self) -> Option<String> {
+        self.pass.clone()
+    }
+
     /// Tells if the Entity as a tag
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.contains_key(&slugify(&tag))
@@ -492,7 +496,7 @@ impl Entity {
         self
     }
 
-    pub fn with_password(mut self, pass: &Option<String>) -> Self {
+    pub fn with_password(mut self, pass: Option<&String>) -> Self {
         self.pass = match pass {
             Some(p) => Some(hash(p)),
             None => None,
@@ -500,9 +504,9 @@ impl Entity {
         self
     }
 
-    pub fn authorized(&self, pwd: &Option<String>) -> Result<()> {
+    pub fn authorized(&self, pwd: Option<&String>) -> Result<()> {
         match &self.pass {
-            Some(ph) => match pwd.is_some() && hash(pwd.as_ref().unwrap()) == *ph {
+            Some(ph) => match pwd.is_some() && pwd.unwrap() == ph {
                 true => Ok(()),
                 false => Err(ValisError::Unauthorized),
             },

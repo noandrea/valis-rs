@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ),
         )
         .subcommand(App::new("today").about("print the today agenda"))
+        .subcommand(App::new("export").about("export the database"))
         .subcommand(App::new("agenda").about("print th expenses summary"))
         .subcommand(
             App::new("search").about("search for a transaction").arg(
@@ -117,7 +118,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     // User management
-    let cfg = match UserConfig::load(&cfg_path)? {
+    let mut cfg = match UserConfig::load(&cfg_path)? {
         Some(uc) => uc,
         None => panic!(
             "missing configuration, please restore the configuration at {:?} before continuing",
@@ -129,14 +130,26 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         Some(u) => u,
         None => panic!("your configured user does not match in the database"),
     };
-
-    if let Some(ref _current_pwd) = principal.pass {
-        let pwd = prompts::password("please enter your password");
-        match principal.authorized(&Some(pwd)) {
-            Err(e) => panic!("password mismatch, please try again"),
-            _ => {}
+    // current user must have the password but it can be cached
+    let cached_pwd = cfg.pwd.as_ref();
+    println!("{:?}", cached_pwd);
+    // check login
+    match cached_pwd {
+        Some(pwd) => principal.authorized(Some(pwd)),
+        None => {
+            let pwd = prompts::password("please enter your password");
+            principal.authorized(Some(&utils::hash(&pwd)))
         }
     }
+    .expect("invalid credentials!");
+    // ask for caching
+    if let None = cached_pwd {
+        if let Yes = prompts::confirm("would you like to cache your password?", Yes) {
+            cfg.pwd = principal.get_pwd_hash();
+            cfg.save(&cfg_path)?;
+        };
+    };
+
     println!("Welcome back {}", principal);
 
     // command line
@@ -255,7 +268,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
 #[derive(Debug)]
 enum Cell {
-    Amt(f32),    // amount
     Pcent(f32),  // percent
     Str(String), // string
     Cnt(usize),  // counter
@@ -304,7 +316,6 @@ impl Printer {
                         let s = self.sizes[i];
                         match c {
                             Str(v) => v.pad(s, ' ', Left, true),
-                            Amt(v) => format!("{}€", v).pad(s, ' ', Right, false),
                             Cnt(v) => format!("{}", v).pad(s, ' ', Right, false),
                             Pcent(v) => {
                                 let p = v * 100.0;
@@ -337,33 +348,23 @@ mod tests {
         p.sep();
         p.row(vec![
             Str("One".to_string()),
-            Amt(80.0),
+            // Amt(80.0),
             Cnt(100),
             Pcent(0.1043), // completion percentage
         ]);
         p.row(vec![
             Str("Two".to_string()),
-            Amt(59.0),
+            // Amt(59.0),
             Cnt(321),
             Pcent(0.0420123123), // completion percentage
         ]);
         p.row(vec![
             Str("Three".to_string()),
-            Amt(220.0),
+            // Amt(220.0),
             Cnt(11),
             Pcent(0.309312321), // completion percentage
         ]);
         p.sep();
-
-        let printed =
-            "a    |b         |c         |d                                                 
------|----------|----------|--------------------------------------------------
-One  |       80€|       100|10.43
-Two  |       59€|       321|4.20
-Three|      220€|        11|▮▮▮▮▮▮▮▮▮▮30.93
------|----------|----------|--------------------------------------------------";
-
         assert_eq!(p.data.len(), 6);
-        assert_eq!(p.to_string(), printed);
     }
 }
