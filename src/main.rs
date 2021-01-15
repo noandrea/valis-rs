@@ -1,5 +1,5 @@
 mod ledger;
-use ledger::DataStore;
+use ledger::{DataStore, ExportFormat};
 mod prompts;
 use prompts::{PolarAnswer::*, UserConfig};
 mod utils;
@@ -132,7 +132,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
     // current user must have the password but it can be cached
     let cached_pwd = cfg.pwd.as_ref();
-    println!("{:?}", cached_pwd);
     // check login
     match cached_pwd {
         Some(pwd) => principal.authorized(Some(pwd)),
@@ -238,6 +237,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 p.sep();
                 p.render();
             }
+        }
+        Some(("export", c)) => {
+            let default_path = db_path.join("export.json").to_string_lossy().to_string();
+            let export_path = c.value_of("path").unwrap_or(&default_path);
+
+            ds.export(Path::new(export_path), ExportFormat::Json)?;
+            println!("dataset exported in {}", export_path);
         }
         Some((&_, _)) | None => {
             let items = ds.agenda(&valis::today(), &TimeWindow::SingleDay, 0, 0);
