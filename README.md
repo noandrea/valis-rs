@@ -1,4 +1,4 @@
-# CostOf.Life
+# VALIS
 
 [![Crates.io](https://img.shields.io/crates/v/valis)](https://crates.io/crates/valis)
 [![Coverage Status](https://coveralls.io/repos/github/noandrea/valis-rs/badge.svg?branch=master)](https://coveralls.io/github/noandrea/valis-rs?branch=master)
