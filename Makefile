@@ -22,7 +22,7 @@ list:
 
 default: build
 
-build: 
+build:
 	cargo build
 
 build-dist:
@@ -33,7 +33,7 @@ build-dist:
 	@echo done
 
 install: build-dist
-	mv target/release/$(APP) ~/Applications/bin
+	mv target/release/$(APP) ~/Applications/bin/v
 
 build-zip: build-dist
 	@echo build zip release
@@ -41,10 +41,11 @@ build-zip: build-dist
 	sha1sum $(APP)-$(GIT_DESCR).zip
 	@echo done
 
-test: 
-	RUST_BACKTRACE=1 cargo tarpaulin -o Lcov
+test:
+	RUST_BACKTRACE=1 cargo test
 
-test-all: test test-wasm
+test-cov: test
+	RUST_BACKTRACE=1 cargo tarpaulin -o Lcov
 
 lint: lint-all
 
@@ -71,7 +72,7 @@ docker-push:
 	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG)
 	@echo done
 
-docker-run: 
+docker-run:
 	docker run -p 2007:2007 $(DOCKER_IMAGE):latest
 
 publish:
@@ -118,4 +119,4 @@ _release-major:
 	$(eval GIT_DESCR = $(shell git describe --tags | awk -F '("|")' '{ print($$1)}' | awk -F. '{$$(NF-2) = $$(NF-2) + 1;} 1' | sed 's/ /./g' | awk -F. '{$$(NF-1) = 0;} 1' | sed 's/ /./g' | awk -F. '{$$(NF) = 0;} 1' | sed 's/ /./g' ))
 	cargo bump major
 	git add Cargo.toml Cargo.lock
-release-major: _release-major git-release 
+release-major: _release-major git-release

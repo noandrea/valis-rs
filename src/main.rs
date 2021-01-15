@@ -1,7 +1,7 @@
 mod ledger;
 use ledger::DataStore;
 mod prompts;
-use prompts::ConfirmAnswer::*;
+use prompts::{PolarAnswer::*, UserConfig};
 mod utils;
 
 use clap::{App, Arg};
@@ -12,6 +12,7 @@ use std::error;
 use std::fs;
 use std::path::Path;
 
+use ::valis::{Tag, TimeWindow};
 use Alignment::*;
 use Cell::*;
 
@@ -20,6 +21,7 @@ const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "farcast";
 const APPLICATION: &str = "valis";
 const DB_FOLDER: &str = "data";
+const CFG_USER: &str = "user.toml";
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     //println!("Welcome to CostOf.Life!");
@@ -28,7 +30,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .version(VERSION)
         .author("Andrea G. <no.andrea@gmail.com>")
         .about("keep track of the cost of your daily life")
-        .after_help("visit https://thecostof.life for more info")
+        .after_help("visit https://meetvalis.com for more info")
         .arg(
             Arg::new("config")
                 .short('c')
@@ -43,7 +45,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .arg(
                     Arg::new("EXP_STR")
                         .about("write the expense string")
-                        .required(true)
                         .multiple(true)
                         .value_terminator("."),
                 )
@@ -69,71 +70,138 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .get_matches();
 
     // first, see if there is the config dir
-    let path = match ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION) {
-        Some(p) => {
-            if !p.data_dir().exists() {
-                match prompts::confirm("The VALIS data dir does not exists, can I create it?", Yes)
-                {
-                    Yes => match fs::create_dir_all(p.data_dir()) {
-                        Ok(_) => println!("data folder created at {:?}", p.data_dir()),
-                        Err(e) => {
-                            println!("error creating folder {:?}: {}", p.data_dir(), e);
-                            panic!()
-                        }
-                    },
-                    No => {
-                        println!("alright then :(");
-                        return Ok(());
-                    }
-                }
+    let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .expect("error! cannot establish project home dir! ");
+    // data path
+    if !dirs.data_dir().exists() {
+        match prompts::confirm("The VALIS data dir does not exists, can I create it?", Yes) {
+            Yes => {
+                fs::create_dir_all(dirs.data_dir()).unwrap();
+                println!("data folder created at {:?}", dirs.data_dir());
             }
-            p.data_dir().join(Path::new(DB_FOLDER))
+            No => {
+                println!("alright then :(");
+                return Ok(());
+            }
         }
-        None => panic!("cannot retrieve the config file dir"),
+    }
+    // Load the datastore
+    let db_path = dirs.data_dir().join(Path::new(DB_FOLDER));
+    let mut ds = DataStore::open(db_path.as_path())?;
+    // this is instead the config path
+    let cfg_path = dirs.preference_dir().join(CFG_USER);
+    // fist check if the datastore has content
+    // if the datastore is empty then setup
+    if ds.is_empty() {
+        // if no exit
+        if let No = prompts::confirm("VALIS is not configured yet, shall we do it?", Yes) {
+            println!("alright, we'll think about it later");
+            return Ok(());
+        }
+        println!("let's start with a few questions");
+        // first create the owner itself
+        let principal = prompts::principal_entity()
+            .self_sponsored()
+            .tag(Tag::System("owner".to_owned()))
+            .tag(Tag::System("admin".to_owned()));
+        // ask about the root entity
+        let root = prompts::root_entity()
+            .with_sponsor(&principal)
+            .tag(Tag::System("root".to_owned()));
+
+        ds.init(&principal)?;
+        ds.add(&root)?;
+        // now create a new user config and store it
+        let cfg = UserConfig::new(principal.uid());
+        cfg.save(&cfg_path)?;
+    }
+
+    // User management
+    let cfg = match UserConfig::load(&cfg_path)? {
+        Some(uc) => uc,
+        None => panic!(
+            "missing configuration, please restore the configuration at {:?} before continuing",
+            &cfg_path
+        ),
     };
-    // load the datastores
-    let mut ds = DataStore::open(path.as_path());
+    // load the current user
+    let principal = match ds.get_by_uid(&cfg.uid)? {
+        Some(u) => u,
+        None => panic!("your configured user does not match in the database"),
+    };
+
+    if let Some(ref _current_pwd) = principal.pass {
+        let pwd = prompts::password("please enter your password");
+        match principal.authorized(&Some(pwd)) {
+            Err(e) => panic!("password mismatch, please try again"),
+            _ => {}
+        }
+    }
+    println!("Welcome back {}", principal);
+
     // command line
     match matches.subcommand() {
         Some(("add", c)) => {
-            if let Some(values) = c.values_of("EXP_STR") {
-                let v = values.collect::<Vec<&str>>().join(" ");
-                let th = valis::Entity::from_str(&v).expect("Cannot parse the input string");
-                // check the values for
-                if c.is_present("non_interactive") {
-                    ds.insert(&th);
-                    println!("done!");
-                    return Ok(());
+            let entity = match c.values_of("EXP_STR") {
+                Some(values) => {
+                    let v = values.collect::<Vec<&str>>().join(" ");
+                    valis::Entity::from_str(&v).expect("Cannot parse the input string")
                 }
-                // print the transaction
-                println!("Name     : {}", th.get_name());
-                // save to the store
-                match prompts::confirm("Do you want to add it?", Yes) {
-                    Yes => {
-                        ds.insert(&th);
-                        println!("done!")
-                    }
-                    No => println!("ok, another time"),
-                }
-            } else {
-                println!("Tell me what to add, eg: Car 2000€ .transport 5y")
+                None => prompts::new_entity(),
+            }
+            .with_sponsor(&principal);
+            // check the values for
+            if c.is_present("non_interactive") {
+                ds.add(&entity)?;
+                return Ok(());
+            }
+            // print the transaction
+            println!("Name     : {}", entity.get_name());
+            // save to the store
+            match prompts::confirm("Do you want to add it?", Yes) {
+                Yes => match ds.add(&entity) {
+                    Ok(uid) => println!("added with uid {}", uid),
+                    Err(e) => println!("something went wrong {}", e),
+                },
+                No => println!("ok, another time"),
             }
         }
-        Some(("today", _c)) => {
-            let mut p = Printer::new(vec![27, 12, 9]);
-            // title
-            p.head(vec!["Name", "Price", "Due"]);
-            p.sep();
-            // data
-            p.sep();
-            p.render();
-        }
         Some(("agenda", _c)) => {
-            let mut p = Printer::new(vec![27, 12, 9, 100]);
+            let mut p = Printer::new(vec![27, 10, 10]);
 
-            p.head(vec!["Title", "Count", "Diem", "%"]);
-            p.sep();
-            // total per diem
+            let ranges = vec![
+                ("Past", TimeWindow::UpTo),
+                ("Today", TimeWindow::SingleDay),
+                ("Next 3d", TimeWindow::Day(3)),
+                ("In 10d", TimeWindow::Day(7)),
+                ("In 1m", TimeWindow::Month(1)),
+            ];
+
+            let mut target_date = valis::after(-1);
+            for range in ranges {
+                let (label, r) = range;
+                let items = ds.agenda(&target_date, &r, 0, 0);
+                if items.len() == 0 {
+                    continue;
+                }
+                // print header
+                p.head(vec![
+                    label,
+                    &target_date.to_string(),
+                    &r.end_date_inclusive(&target_date).to_string(),
+                ]);
+                p.sep();
+                // print stuff
+                items.iter().for_each(|e| {
+                    p.row(vec![
+                        Str(e.name.to_string()),
+                        Str(e.next_action_note.to_string()),
+                    ])
+                });
+                target_date = r.end_date(&target_date);
+                p.sep();
+            }
+
             // separator
             p.sep();
             p.render();
@@ -158,7 +226,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 p.render();
             }
         }
-        Some((&_, _)) | None => {}
+        Some((&_, _)) | None => {
+            let items = ds.agenda(&valis::today(), &TimeWindow::SingleDay, 0, 0);
+            if items.len() == 0 {
+                println!("Nothing for today");
+                return Ok(());
+            }
+
+            let mut p = Printer::new(vec![27, 12]);
+            // title
+            p.head(vec!["Name", "About"]);
+            p.sep();
+            items.iter().for_each(|e| {
+                p.row(vec![
+                    Str(e.name.to_string()),
+                    Str(e.next_action_note.to_string()),
+                ])
+            });
+            // data
+            p.sep();
+            p.render();
+        }
     }
 
     ds.close();

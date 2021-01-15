@@ -1,4 +1,5 @@
-use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, ParseError, Utc};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, Utc};
+use rand::Rng;
 
 /// split  a string in two pieces
 pub fn split_once(s: &str, sep: char) -> Option<(&str, &str)> {
@@ -21,6 +22,25 @@ pub fn after(days: i64) -> NaiveDate {
 /// Returns the datetime with the local timezone
 pub fn now_local() -> DateTime<FixedOffset> {
     DateTime::from(Local::now())
+}
+
+pub fn random_timewindow(start: usize, limit: usize, unit: Option<char>) -> String {
+    let mut rng = rand::thread_rng();
+    match unit {
+        Some(c) => format!("{}{}", rng.gen_range(start..limit), c),
+        None => {
+            let c = vec!['d', 'w', 'm', 'y'];
+            format!(
+                "{}{}",
+                rng.gen_range(start..limit),
+                c[rng.gen_range(0..c.len())]
+            )
+        }
+    }
+}
+
+pub fn hash(data: &str) -> String {
+    blake3::hash(data.as_bytes()).to_hex().to_lowercase()
 }
 
 /// Builds a date from day/month/year numeric
