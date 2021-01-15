@@ -210,6 +210,17 @@ pub enum RelState {
     Former(NaiveDate, Option<NaiveDate>),
     Disabled(NaiveDate, Option<NaiveDate>),
 }
+impl RelState {
+    pub fn emoji(&self) -> String {
+        match self {
+            Self::Root => "☀️".to_owned(),
+            Self::Active(_, _) => "🟢".to_owned(),
+            Self::Passive(_, _) => "⚪".to_owned(),
+            Self::Former(_, _) => "⚫".to_owned(),
+            Self::Disabled(_, _) => "-".to_owned(),
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Tag {
@@ -354,6 +365,18 @@ pub enum RelQuality {
     Hostile(NaiveDate, Option<NaiveDate>),  // full out hostile
 }
 
+impl RelQuality {
+    pub fn emoji(&self) -> String {
+        match self {
+            Self::Neutral(_, _) => "😐".to_owned(),
+            Self::Formal(_, _) => "👔".to_owned(),
+            Self::Friendly(_, _) => "🙂".to_owned(),
+            Self::Tense(_, _) => "☹️".to_owned(),
+            Self::Hostile(_, _) => "😠".to_owned(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RelType {
     Role(String, NaiveDate, Option<NaiveDate>), // this is the main context
@@ -404,8 +427,8 @@ pub struct Entity {
     pub handles: HashMap<String, String>, // email, telegram, phone
     // contextual data
     class: String, // person / object / company / project
-    state: RelState,
-    quality: RelQuality,
+    pub state: RelState,
+    pub quality: RelQuality,
     pub sponsor: Uuid, // the uid of the sponsor for this thing that must be a person
     // service dates
     created_on: NaiveDate,

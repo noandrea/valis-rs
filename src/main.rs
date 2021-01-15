@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
         }
         Some(("agenda", _c)) => {
-            let mut p = Printer::new(vec![27, 10, 10]);
+            let mut p = Printer::new(vec![30, 4, 4, 10, 50]);
 
             let ranges = vec![
                 ("Past", TimeWindow::UpTo),
@@ -202,11 +202,21 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     &target_date.to_string(),
                     &r.end_date_inclusive(&target_date).to_string(),
                 ]);
+                p.head(vec![
+                    "Name",
+                    "Status",
+                    "Relationship",
+                    "Next Date",
+                    "Message",
+                ]);
                 p.sep();
                 // print stuff
                 items.iter().for_each(|e| {
                     p.row(vec![
                         Str(e.name.to_string()),
+                        Str(e.state.emoji()),
+                        Str(e.quality.emoji()),
+                        Str(e.next_action_date.to_string()),
                         Str(e.next_action_note.to_string()),
                     ])
                 });
@@ -252,13 +262,22 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 return Ok(());
             }
 
-            let mut p = Printer::new(vec![27, 12]);
+            let mut p = Printer::new(vec![30, 4, 4, 10, 50]);
             // title
-            p.head(vec!["Name", "About"]);
+            p.head(vec![
+                "Name",
+                "Status",
+                "Relationship",
+                "Next Date",
+                "Message",
+            ]);
             p.sep();
             items.iter().for_each(|e| {
                 p.row(vec![
                     Str(e.name.to_string()),
+                    Str(e.state.emoji()),
+                    Str(e.quality.emoji()),
+                    Str(e.next_action_date.to_string()),
                     Str(e.next_action_note.to_string()),
                 ])
             });

@@ -165,6 +165,7 @@ impl DataStore {
                 let raw = self.entities.get(v).unwrap().unwrap();
                 let e: Entity = bincode::deserialize(&raw).unwrap();
                 e.next_action_date >= s && e.next_action_date < u
+                // TODO: also match disabled records
             })
             .map(|r| {
                 let (_k, v) = r.unwrap();
