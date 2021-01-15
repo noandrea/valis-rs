@@ -1,12 +1,12 @@
-use ::valis::{self, Entity, Tag, TimeWindow};
-use chrono::{Duration, NaiveDate};
+use ::valis::{self, Entity, TimeWindow};
+use chrono::NaiveDate;
+use rand::random;
 use simsearch::SimSearch;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufRead, LineWriter, Write};
+use std::io::{LineWriter, Write};
 use std::path::Path;
-use std::str::FromStr;
 
 const TABLE_ENTITIES: &str = "ENTITIES";
 const TABLE_TAGS: &str = "TAGS";
@@ -15,6 +15,7 @@ const TABLE_EDGES: &str = "EDGES";
 const TABLE_EVENTS: &str = "EVENTS";
 const TABLE_ACTIONS: &str = "ACTIONS";
 const TABLE_IDS: &str = "IDS";
+const TABLE_SYSTEM: &str = "SYSTEM";
 
 // Let's use generic errors
 type Result<T> = std::result::Result<T, DataError>;
@@ -62,6 +63,7 @@ pub struct DataStore {
     tags: sled::Tree,
     edges: sled::Tree,
     acl: sled::Tree,
+    system: sled::Tree,
 }
 
 impl DataStore {
@@ -75,6 +77,12 @@ impl DataStore {
         let tags = db.open_tree(TABLE_TAGS)?;
         let edges = db.open_tree(TABLE_EDGES)?;
         let acl = db.open_tree(TABLE_ACL)?;
+        let system = db.open_tree(TABLE_SYSTEM)?;
+        // generate salt for password
+        let salt: String = (0..64).map(|_| random::<char>()).collect();
+        let salt_hash: &str = &valis::hash(&salt);
+        system.insert("password:salt", salt_hash)?;
+        // datastore
         Ok(DataStore {
             db,
             entities,
@@ -83,6 +91,7 @@ impl DataStore {
             tags,
             edges,
             acl,
+            system,
         })
     }
 
