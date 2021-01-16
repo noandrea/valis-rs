@@ -19,6 +19,9 @@ pub use uuid::Uuid;
 mod utils;
 pub use utils::*;
 
+// this is for working with enums
+use strum::AsRefStr;
+
 // Let's use generic errors
 type Result<T> = std::result::Result<T, ValisError>;
 
@@ -118,7 +121,7 @@ impl TimeWindow {
 
     pub fn range(&self, since: &NaiveDate) -> (NaiveDate, NaiveDate) {
         match self {
-            Self::UpTo => (date(1, 1, 1970), *since + Duration::days(1)),
+            Self::UpTo => (date(1, 1, 1970), since.succ()),
             _ => (*since, *since + Duration::days(self.get_days_since(since))),
         }
     }
@@ -222,16 +225,27 @@ impl RelState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, AsRefStr)]
 pub enum Tag {
+    #[strum(serialize = "tag")]
     Generic(String), // simple tag
+    #[strum(serialize = "feat")]
     Feature(String), // wood, web design, sale, rust,
-    Group(String),   // family, friends, colleague, employee, customer
-    Link(String),    // various urls if relevant
+    #[strum(serialize = "cat")]
+    Group(String), // family, friends, colleague, employee, customer
+    #[strum(serialize = "link")]
+    Link(String), // various urls if relevant
     // contextual roles
+    #[strum(serialize = "role")]
     Role(String), // this is a role within the main context
     // system
     System(String),
+}
+
+impl Tag {
+    pub fn from(prefix: &str, label: &str) -> Result<Self> {
+        Self::from_str(&format!("{}:{}", prefix, label))
+    }
 }
 
 impl FromStr for Tag {
@@ -461,6 +475,17 @@ impl Entity {
             .collect::<BTreeSet<String>>()
             .into_iter()
             .collect()
+    }
+
+    pub fn add_handle(name: &str, val: &str) {}
+
+    pub fn get_next_action_headline(&self) -> String {
+        for l in self.next_action_note.split('\n') {
+            if l.trim().len() > 0 {
+                return l.to_string();
+            }
+        }
+        String::new()
     }
 
     pub fn get_pwd_hash(&self) -> Option<String> {

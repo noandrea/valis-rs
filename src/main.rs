@@ -13,6 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use ::valis::{Tag, TimeWindow};
+use chrono::NaiveDate;
 use Alignment::*;
 use Cell::*;
 
@@ -179,7 +180,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
         }
         Some(("agenda", _c)) => {
-            let mut p = Printer::new(vec![30, 4, 4, 10, 50]);
+            let mut p = Printer::new(vec![30, 3, 3, 13, 80]);
 
             let ranges = vec![
                 ("Past", TimeWindow::UpTo),
@@ -189,7 +190,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 ("In 1m", TimeWindow::Month(1)),
             ];
 
-            let mut target_date = valis::after(-1);
+            p.head(vec!["Name", "", "", "Next Date", "Message"]);
+            p.sep();
+
+            let mut target_date = valis::today();
             for range in ranges {
                 let (label, r) = range;
                 let items = ds.agenda(&target_date, &r, 0, 0);
@@ -198,16 +202,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 }
                 // print header
                 p.head(vec![
-                    label,
-                    &target_date.to_string(),
-                    &r.end_date_inclusive(&target_date).to_string(),
-                ]);
-                p.head(vec![
-                    "Name",
-                    "Status",
-                    "Relationship",
-                    "Next Date",
-                    "Message",
+                    &format!(" 📅 {}", label),
+                    // &target_date.to_string(),
+                    // &r.end_date_inclusive(&target_date).to_string(),
                 ]);
                 p.sep();
                 // print stuff
@@ -216,8 +213,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         Str(e.name.to_string()),
                         Str(e.state.emoji()),
                         Str(e.quality.emoji()),
-                        Str(e.next_action_date.to_string()),
-                        Str(e.next_action_note.to_string()),
+                        Date(e.next_action_date),
+                        Str(e.get_next_action_headline()),
                     ])
                 });
                 target_date = r.end_date(&target_date);
@@ -225,7 +222,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
 
             // separator
-            p.sep();
             p.render();
         }
         Some(("search", c)) => {
@@ -277,8 +273,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     Str(e.name.to_string()),
                     Str(e.state.emoji()),
                     Str(e.quality.emoji()),
-                    Str(e.next_action_date.to_string()),
-                    Str(e.next_action_note.to_string()),
+                    Date(e.next_action_date),
+                    Str(e.get_next_action_headline()),
                 ])
             });
             // data
@@ -293,9 +289,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
 #[derive(Debug)]
 enum Cell {
-    Pcent(f32),  // percent
-    Str(String), // string
-    Cnt(usize),  // counter
+    Pcent(f32),      // percent
+    Str(String),     // string
+    Cnt(usize),      // counter
+    Date(NaiveDate), // date
     Sep,
 }
 
@@ -342,6 +339,10 @@ impl Printer {
                         match c {
                             Str(v) => v.pad(s, ' ', Left, true),
                             Cnt(v) => format!("{}", v).pad(s, ' ', Right, false),
+                            Date(v) => v
+                                .format("%a, %d.%m.%y")
+                                .to_string()
+                                .pad(s, ' ', Left, false),
                             Pcent(v) => {
                                 let p = v * 100.0;
                                 let b = (p as usize * s) / 100; // bar length
