@@ -1,4 +1,5 @@
-use ::valis::{Entity, TimeWindow};
+use ::valis::{Entity, Tag, TimeWindow};
+use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input, Password, Select};
 use std::str::FromStr;
 use Feat::*;
@@ -62,17 +63,36 @@ fn _i(q: &str, empty: Feat) -> String {
         .unwrap()
 }
 
-/// shortcut for Select input
-fn _s<'a>(q: &str, opts: Vec<(&'a str, &'a str)>) -> &'a str {
-    opts[Select::with_theme(&ColorfulTheme::default())
+/// shortcut for Select optional input
+fn _s_opt<'a, T: ?Sized>(q: &str, opts: Vec<(&'a str, &'a T)>) -> Option<&'a T> {
+    match Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(q)
         .items(
             &opts
                 .iter()
-                .map(|(l, v)| l.to_string())
+                .map(|(l, _v)| l.to_string())
                 .collect::<Vec<String>>(),
         )
         .default(0)
-        .interact()
+        .interact_on_opt(&Term::stdout())
+        .unwrap()
+    {
+        Some(i) => Some(opts[i].1),
+        _ => None,
+    }
+}
+
+fn _s<'a, T: ?Sized>(q: &str, opts: Vec<(&'a str, &'a T)>) -> &'a T {
+    opts[Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(q)
+        .items(
+            &opts
+                .iter()
+                .map(|(l, _v)| l.to_string())
+                .collect::<Vec<String>>(),
+        )
+        .default(0)
+        .interact_on(&Term::stdout())
         .unwrap()]
     .1
 }
@@ -105,11 +125,11 @@ pub fn principal_entity() -> Entity {
         .with_prompt("now choose a password?")
         .allow_empty_password(false)
         .with_confirmation("repeat the password", "password doesn't match!")
-        .interact()
-        .unwrap();
+        .interact_on(&Term::stdout())
+        .ok();
     Entity::from(&name, "person")
         .unwrap()
-        .with_password(Some(&pass))
+        .with_password(pass.as_ref())
 }
 
 pub fn root_entity() -> Entity {
@@ -121,7 +141,6 @@ pub fn root_entity() -> Entity {
             ("Both", "general"),
         ],
     );
-
     let name = _i(
         "How would you call the main center of your interest",
         Feat::NonEmpty,
@@ -157,10 +176,11 @@ pub fn new_entity() -> Entity {
             ("Later", &rtw),
         ],
     );
-    e.next_action_date = TimeWindow::from_str(&tw)
-        .unwrap()
-        .end_date_inclusive(&valis::today());
-    e.next_action_note = _e(&format!("leave a note for the reminder"));
+
+    let nad = TimeWindow::from_str(&tw).unwrap().end_date(&valis::today());
+    let nan = _e("leave a note for the reminder");
+    e.next_action(nad, nan);
+
     println!(
         "I'll remind you on {} about {} with:\n{}",
         e.next_action_date, name, e.next_action_note
@@ -168,8 +188,46 @@ pub fn new_entity() -> Entity {
     // info
     if let Yes = _c("would you like to add some details?", Yes) {
         e.description = _e(&format!("write a note about {}", name));
+
+        while let Yes = _c("add a tag?", Yes) {
+            let tags = vec![
+                ("Tag", "generic"),
+                ("Category", "category"),
+                ("Skill", "feat"),
+                ("Link", "link"),
+                ("Role", "role"),
+            ];
+            let prefix = _s("tag type", tags);
+            let label = _i("what is the tag label", Feat::NonEmpty);
+            e = e.tag(Tag::from(&prefix, &label).unwrap());
+        }
     };
 
     // return
     e
+}
+
+pub fn edit_entities(items: &Vec<Entity>) -> Option<&Entity> {
+    let opts = items.iter().map(|e| (e.name(), e)).collect();
+    _s_opt("Which one", opts)
+}
+
+pub fn edit_entity(mut target: Entity) -> Entity {
+    // action
+    let rtw = valis::random_timewindow(1, 12, Some('w'));
+    let tw = _s(
+        &"when shall you be reminded about it",
+        vec![
+            ("Tomorrow", "1d"),
+            ("In 10 days", "10d"),
+            ("In one month", "1m"),
+            ("In three months", "3m"),
+            ("Later", &rtw),
+        ],
+    );
+
+    let nad = TimeWindow::from_str(&tw).unwrap().offset(&valis::today());
+    let nan = _e(&target.get_next_action_headline());
+    target.next_action(nad, nan);
+    target
 }

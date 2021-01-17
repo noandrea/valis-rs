@@ -1,11 +1,11 @@
-use ::valis::{self, Entity, TimeWindow};
+use ::valis::{self, Entity, Tag};
 use chrono::NaiveDate;
 use rand::random;
 use simsearch::SimSearch;
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
-use std::io::{LineWriter, Write};
+use std::io::{BufRead, BufReader, LineWriter, Write};
 use std::path::Path;
 
 const TABLE_ENTITIES: &str = "ENTITIES";
@@ -20,12 +20,14 @@ const TABLE_SYSTEM: &str = "SYSTEM";
 // Let's use generic errors
 type Result<T> = std::result::Result<T, DataError>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DataError {
     NotImplemented,
     InvalidSponsor,
+    NotFound,
     GenericError(String),
     InitializationError,
+    IDAlreadyTaken,
 }
 
 impl Error for DataError {}
@@ -51,6 +53,19 @@ impl From<std::io::Error> for DataError {
 pub enum ExportFormat {
     Json,
     Binary,
+}
+
+fn action_key(e: &Entity) -> String {
+    format!("{}:{}", e.next_action_date, e.uid())
+}
+fn tag_key(t: &Tag, e: &Entity) -> String {
+    format!("{}:{}:{}", t.prefix(), t.slug(), e.uid())
+}
+fn handle_key(p: &str, v: &str) -> String {
+    valis::hash(&valis::slugify(format!("{}:{}", p, v)))
+}
+fn str(v: &sled::IVec) -> String {
+    String::from_utf8_lossy(v).to_string()
 }
 
 /// A simple datastore that can persist data on file
@@ -113,10 +128,24 @@ impl DataStore {
                 let e: Entity = bincode::deserialize(&raw).unwrap();
                 let j = serde_json::to_string(&e).unwrap();
                 file.write(j.as_bytes()).ok();
+                file.write("\n".as_bytes()).ok();
             }),
             ExportFormat::Binary => {}
         };
         file.flush()?;
+        Ok(())
+    }
+
+    pub fn import(&mut self, path: &Path, format: ExportFormat) -> Result<()> {
+        let file = File::open(path)?;
+        match format {
+            ExportFormat::Json => BufReader::new(file).lines().for_each(|r| {
+                let line = r.unwrap();
+                let e: Entity = serde_json::from_str(&line).unwrap();
+                self.insert(&e).unwrap();
+            }),
+            ExportFormat::Binary => {}
+        };
         Ok(())
     }
 
@@ -145,32 +174,39 @@ impl DataStore {
         }
     }
 
+    pub fn agenda_until(&self, until: &NaiveDate, limit: usize, offset: usize) -> Vec<Entity> {
+        self.actions
+            .iter()
+            .map(|r| {
+                let (_k, v) = r.unwrap();
+                let raw = self.entities.get(v).unwrap().unwrap();
+                bincode::deserialize(&raw).unwrap()
+            })
+            .filter(|e: &Entity| e.action_within(until))
+            .collect::<Vec<Entity>>()
+    }
+
     /// Return aggregation summary for tags
     ///
     pub fn agenda(
         &self,
         since: &NaiveDate,
-        window: &TimeWindow,
+        until: &NaiveDate,
         limit: usize,
         offset: usize,
     ) -> Vec<Entity> {
-        let (s, u) = window.range_inclusive(since);
-        let prefix_str = valis::prefix(&s.to_string(), &u.to_string());
+        let prefix_str = valis::prefix(&since.to_string(), &until.pred().to_string());
         // fetch all the stuff
-        let (s, u) = window.range(since);
         self.actions
             .scan_prefix(prefix_str)
-            .filter(|r| {
-                let (_k, v) = r.as_ref().unwrap();
-                let raw = self.entities.get(v).unwrap().unwrap();
-                let e: Entity = bincode::deserialize(&raw).unwrap();
-                e.next_action_date >= s && e.next_action_date < u
-                // TODO: also match disabled records
-            })
             .map(|r| {
                 let (_k, v) = r.unwrap();
                 let raw = self.entities.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
+            })
+            .filter(|e: &Entity| {
+                // TODO: also match disabled records
+                e.action_within_range(since, until)
             })
             .collect::<Vec<Entity>>()
     }
@@ -193,8 +229,57 @@ impl DataStore {
     pub fn add(&mut self, entity: &Entity) -> Result<valis::Uuid> {
         // search for the sponsor
         match self.get_by_uid(&entity.sponsor_uid())? {
-            Some(_s) => self.insert(entity),
+            Some(sponsor) => {
+                // cannot self sponsor
+                if sponsor.uid() == entity.uid() {
+                    return Err(DataError::InvalidSponsor);
+                }
+                Ok(())
+            }
             None => Err(DataError::InvalidSponsor),
+        }?;
+        // now check for conflicting ids
+        for (label, id) in entity.handles.iter() {
+            if self.ids.get(&handle_key(label, id))?.is_some() {
+                return Err(DataError::IDAlreadyTaken);
+            }
+        }
+        // all good
+        self.insert(entity)
+    }
+
+    pub fn update(&mut self, entity: &Entity) -> Result<valis::Uuid> {
+        // search for the sponsor
+        match self.get_by_uid(&entity.uid())? {
+            Some(old) => {
+                // remove existing action dates if they have changed
+                if old.next_action_date != entity.next_action_date {
+                    self.actions.remove(&action_key(&old))?;
+                }
+                // remove existing tags if exists
+                for (k, t) in old.tags.iter() {
+                    if !entity.tags.contains_key(k) {
+                        self.tags.remove(&tag_key(t, entity))?;
+                    }
+                }
+                // remove existing ids
+                for (k, v) in old.handles.iter() {
+                    if !entity.handles.contains_key(k) {
+                        self.ids.remove(&handle_key(k, v))?;
+                    }
+                }
+                // now check for conflicting ids
+                for (k, v) in entity.handles.iter() {
+                    println!("{:?}", k);
+                    if let Some(uid) = self.ids.get(&handle_key(k, v))? {
+                        if str(&uid) != entity.uid() {
+                            return Err(DataError::IDAlreadyTaken);
+                        }
+                    }
+                }
+                self.insert(entity)
+            }
+            None => Err(DataError::NotFound),
         }
     }
 
@@ -206,30 +291,31 @@ impl DataStore {
         // insert the data
         self.entities.insert(k, v).expect("cannot insert entity");
         // insert next action date
-        let ak = format!("{}:{}", entity.next_action_date, entity.uid.to_string());
+        let ak = action_key(entity);
         self.actions.insert(ak, k).expect("cannot insert action");
         // insert ids
         // first insert the id itself
         self.ids.insert(k, k).expect("cannot insert id");
         // then insert the rest
         entity.handles.iter().for_each(|(m, id)| {
-            let ik = format!("{}:{}", m, id);
+            let ik = handle_key(m, id);
             self.ids.insert(ik, k).expect("cannot insert id");
         });
         // insert tags
         entity.tags.iter().for_each(|(_ts, t)| {
-            let tk = format!("{}:{}", t.to_string(), entity.uid.to_string());
-            self.tags.insert(tk, k).expect("cannot insert tag");
+            self.tags
+                .insert(tag_key(t, entity), k)
+                .expect("cannot insert tag");
         });
         // insert relations
         entity.relationships.iter().for_each(|r| {
-            let tk = format!("{}:{}", entity.uid.to_string(), r.kind.get_label());
-            self.edges.insert(tk, k).expect("cannot insert edge");
+            let ik = format!("{}:{}", entity.uid(), r.kind.get_label());
+            self.edges.insert(ik, k).expect("cannot insert edge");
         });
         // insert acl
         entity.visibility.iter().for_each(|a| {
-            let ak = format!("{}:{}", a, entity.uid.to_string());
-            self.acl.insert(ak, k).expect("cannot insert acl");
+            let ik = format!("{}:{}", a, k);
+            self.acl.insert(ik, k).expect("cannot insert acl");
         });
         Ok(entity.uid)
     }
@@ -237,6 +323,7 @@ impl DataStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use valis::*;
 
     #[test]
     fn test_datastore() {
@@ -245,7 +332,7 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // insert a records
-        let mut bob = Entity::from("bob", "person").unwrap();
+        let bob = Entity::from("bob", "person").unwrap();
         ds.insert(&bob).unwrap();
         assert_eq!(ds.entities.len(), 1);
         // fetch it back
@@ -288,19 +375,62 @@ mod tests {
         });
 
         // test
-        let a = ds.agenda(&valis::date(1, 1, 2021), &TimeWindow::Day(1), 0, 0);
+        let (s, u) = TimeWindow::Day(1).range(&valis::date(1, 1, 2021));
+        let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 1);
 
-        let a = ds.agenda(&valis::date(1, 1, 2021), &TimeWindow::Day(2), 0, 0);
+        let (s, u) = TimeWindow::Day(2).range(&valis::date(1, 1, 2021));
+        let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 2);
 
-        let a = ds.agenda(&valis::date(1, 1, 2021), &TimeWindow::Year(1), 0, 0);
-        a.iter().for_each(|e| println!("name {} ", e.name));
+        let (s, u) = TimeWindow::Year(1).range(&valis::date(1, 1, 2021));
+        let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 6);
 
-        let a = ds.agenda(&valis::date(1, 2, 2021), &TimeWindow::Year(1), 0, 0);
+        let (s, u) = TimeWindow::Year(1).range(&valis::date(1, 2, 2021));
+        let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 2);
 
         ds.close();
+    }
+
+    #[test]
+    fn test_update() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        println!("dir is {:?}", d);
+        // open the datastore
+        let mut ds = DataStore::open(d.path()).unwrap();
+        // insert bob
+        let bob = Entity::from("bob", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_next_action(date(1, 1, 2000), "something".to_string());
+
+        assert_eq!(ds.insert(&bob).is_ok(), true);
+        // now update bob next action
+        let bob = bob.with_next_action(date(11, 1, 2000), "something".to_string());
+        assert_eq!(ds.update(&bob).is_ok(), true);
+        // check that there is only one action in the db
+        for r in ds.actions.iter() {
+            let (k, v) = r.unwrap();
+            println!("{}:{}", str(&k), str(&v));
+        }
+        assert_eq!(ds.actions.len(), 1);
+        // now add alice
+        let alice = Entity::from("alice", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_handle("email", "alice@acme.com");
+        assert_eq!(ds.insert(&alice).is_ok(), true);
+        // and bob tries to hijack alice
+        let bob = bob.with_handle("email", "alice&acme.com");
+        //assert_eq!(ds.update(&bob).is_err(), true);
+        assert_eq!(ds.update(&bob).err().unwrap(), DataError::IDAlreadyTaken);
+        // // but what if a new player arrives and tries to hijack alice?
+        let martha = Entity::from("martha", "person")
+            .unwrap()
+            .with_sponsor(&bob)
+            .with_handle("email", "alice@acme.com");
+        assert_eq!(ds.add(&martha).err().unwrap(), DataError::IDAlreadyTaken);
     }
 }

@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         )
         .subcommand(App::new("today").about("print the today agenda"))
         .subcommand(App::new("export").about("export the database"))
+        .subcommand(App::new("import").about("import the database"))
         .subcommand(App::new("agenda").about("print th expenses summary"))
         .subcommand(
             App::new("search").about("search for a transaction").arg(
@@ -169,7 +170,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 return Ok(());
             }
             // print the transaction
-            println!("Name     : {}", entity.get_name());
+            println!("Name     : {}", entity.name());
             // save to the store
             match prompts::confirm("Do you want to add it?", Yes) {
                 Yes => match ds.add(&entity) {
@@ -185,9 +186,10 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             let ranges = vec![
                 ("Past", TimeWindow::UpTo),
                 ("Today", TimeWindow::SingleDay),
-                ("Next 3d", TimeWindow::Day(3)),
-                ("In 10d", TimeWindow::Day(7)),
-                ("In 1m", TimeWindow::Month(1)),
+                ("Within 3 days", TimeWindow::Day(3)),
+                ("Within a week", TimeWindow::Day(4)),
+                ("Within 2 weeks", TimeWindow::Day(7)),
+                ("Within 4 weeks", TimeWindow::Day(14)),
             ];
 
             p.head(vec!["Name", "", "", "Next Date", "Message"]);
@@ -196,16 +198,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             let mut target_date = valis::today();
             for range in ranges {
                 let (label, r) = range;
-                let items = ds.agenda(&target_date, &r, 0, 0);
+                let (since, until) = r.range(&target_date);
+                let items = ds.agenda(&since, &until, 0, 0);
                 if items.len() == 0 {
                     continue;
                 }
                 // print header
-                p.head(vec![
-                    &format!(" 📅 {}", label),
-                    // &target_date.to_string(),
-                    // &r.end_date_inclusive(&target_date).to_string(),
-                ]);
+                p.head(vec![&format!(" 📅 {} / {} entries", label, items.len())]);
                 p.sep();
                 // print stuff
                 items.iter().for_each(|e| {
@@ -217,7 +216,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         Str(e.get_next_action_headline()),
                     ])
                 });
-                target_date = r.end_date(&target_date);
+                target_date = until;
                 p.sep();
             }
 
@@ -247,12 +246,32 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         Some(("export", c)) => {
             let default_path = db_path.join("export.json").to_string_lossy().to_string();
             let export_path = c.value_of("path").unwrap_or(&default_path);
-
             ds.export(Path::new(export_path), ExportFormat::Json)?;
             println!("dataset exported in {}", export_path);
         }
+        Some(("import", c)) => {
+            let default_path = db_path.join("export.json").to_string_lossy().to_string();
+            let export_path = c.value_of("path").unwrap_or(&default_path);
+            ds.import(Path::new(export_path), ExportFormat::Json)?;
+            println!("dataset imported from {}", export_path);
+        }
+        Some(("today", c)) => {
+            println!("press Esc or q to quit");
+            let mut items = ds.agenda_until(&valis::today(), 0, 0);
+            while items.len() > 0 {
+                let target = match prompts::edit_entities(&items) {
+                    Some(t) => t,
+                    None => break,
+                };
+                // TODO
+                let x = prompts::edit_entity(target.clone());
+                ds.update(&x)?;
+                items = ds.agenda_until(&valis::today(), 0, 0);
+            }
+        }
         Some((&_, _)) | None => {
-            let items = ds.agenda(&valis::today(), &TimeWindow::SingleDay, 0, 0);
+            let today = valis::today();
+            let items = ds.agenda(&today, &today.succ(), 0, 0);
             if items.len() == 0 {
                 println!("Nothing for today");
                 return Ok(());

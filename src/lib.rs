@@ -9,7 +9,7 @@ use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use slug::slugify;
+pub use slug::slugify;
 use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
 use std::fmt;
@@ -18,9 +18,6 @@ pub use uuid::Uuid;
 
 mod utils;
 pub use utils::*;
-
-// this is for working with enums
-use strum::AsRefStr;
 
 // Let's use generic errors
 type Result<T> = std::result::Result<T, ValisError>;
@@ -119,29 +116,23 @@ impl TimeWindow {
         }
     }
 
+    /// Range returns the date range from a date adding the time window
+    ///
     pub fn range(&self, since: &NaiveDate) -> (NaiveDate, NaiveDate) {
+        let since = since.clone();
         match self {
-            Self::UpTo => (date(1, 1, 1970), since.succ()),
-            _ => (*since, *since + Duration::days(self.get_days_since(since))),
+            Self::UpTo => (date(01, 01, 0000), since),
+            _ => (since, since + Duration::days(self.get_days_since(&since))),
         }
     }
 
-    pub fn range_inclusive(&self, since: &NaiveDate) -> (NaiveDate, NaiveDate) {
-        match self {
-            Self::UpTo => (date(1, 1, 1970), *since),
-            _ => (
-                *since,
-                *since + Duration::days(self.get_days_since(since) - 1),
-            ),
-        }
-    }
-
-    pub fn end_date_inclusive(&self, since: &NaiveDate) -> NaiveDate {
-        *since + Duration::days(self.get_days_since(since) - 1)
-    }
-
+    // End date returns the exact date when the time window will end (inclusive)
     pub fn end_date(&self, since: &NaiveDate) -> NaiveDate {
-        *since + Duration::days(self.get_days_since(since))
+        (*since + Duration::days(self.get_days_since(since))).pred()
+    }
+
+    pub fn offset(&self, from: &NaiveDate) -> NaiveDate {
+        self.range(from).1
     }
 
     /// Approximates the size of the lifetime
@@ -225,18 +216,13 @@ impl RelState {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, AsRefStr)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Tag {
-    #[strum(serialize = "tag")]
     Generic(String), // simple tag
-    #[strum(serialize = "feat")]
     Feature(String), // wood, web design, sale, rust,
-    #[strum(serialize = "cat")]
-    Group(String), // family, friends, colleague, employee, customer
-    #[strum(serialize = "link")]
-    Link(String), // various urls if relevant
+    Group(String),   // family, friends, colleague, employee, customer
+    Link(String),    // various urls if relevant
     // contextual roles
-    #[strum(serialize = "role")]
     Role(String), // this is a role within the main context
     // system
     System(String),
@@ -245,6 +231,25 @@ pub enum Tag {
 impl Tag {
     pub fn from(prefix: &str, label: &str) -> Result<Self> {
         Self::from_str(&format!("{}:{}", prefix, label))
+    }
+
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            Self::Feature(_) => "feat",
+            Self::Group(_) => "group",
+            Self::Link(_) => "link",
+            Self::Generic(_) => "tag",
+            Self::Role(_) => "role",
+            Self::System(_) => "sys",
+        }
+    }
+
+    pub fn slug(&self) -> String {
+        slugify(self.to_string())
+    }
+
+    pub fn to_string_full(&self) -> String {
+        format!("{}:{}", self.prefix(), self.to_string())
     }
 }
 
@@ -282,12 +287,12 @@ impl PartialEq for Tag {
 impl fmt::Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Feature(label) => write!(f, "feat:{}", label),
-            Self::Group(label) => write!(f, "group:{}", label),
-            Self::Link(label) => write!(f, "link:{}", label),
+            Self::Feature(label) => write!(f, "{}", label),
+            Self::Group(label) => write!(f, "{}", label),
+            Self::Link(label) => write!(f, "{}", label),
             Self::Generic(label) => write!(f, "{}", label),
-            Self::Role(label) => write!(f, "role:{}", label),
-            Self::System(label) => write!(f, "sys:{}", label),
+            Self::Role(label) => write!(f, "{}", label),
+            Self::System(label) => write!(f, "{}", label),
         }
     }
 }
@@ -463,7 +468,7 @@ impl Entity {
     pub fn bin(&self) {}
 
     // Getters
-    pub fn get_name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name[..]
     }
 
@@ -497,6 +502,16 @@ impl Entity {
         self.tags.contains_key(&slugify(&tag))
     }
 
+    /// actions
+    pub fn action_within(&self, date: &NaiveDate) -> bool {
+        self.next_action_date <= *date
+    }
+
+    /// actions
+    pub fn action_within_range(&self, from: &NaiveDate, to: &NaiveDate) -> bool {
+        self.next_action_date >= *from && self.next_action_date < *to
+    }
+
     /// Get the progress of the transaction at date
     ///
     /// None will use today as a data
@@ -528,9 +543,20 @@ impl Entity {
         self.next_action_note = note;
     }
 
+    pub fn with_next_action(mut self, date: NaiveDate, note: String) -> Self {
+        self.next_action_date = date;
+        self.next_action_note = note;
+        self
+    }
+
+    pub fn with_handle(mut self, label: &str, id: &str) -> Self {
+        self.handles.insert(label.to_owned(), id.to_owned());
+        self
+    }
+
     /// add a tag to an entity
     pub fn tag(mut self, tag: Tag) -> Self {
-        self.tags.insert(slugify(tag.to_string()), tag);
+        self.tags.insert(slugify(&tag.to_string_full()), tag);
         self
     }
 
@@ -773,27 +799,25 @@ mod tests {
     }
 
     #[test]
-    fn test_lifetime() {
+    fn test_time_window() {
         let tests = vec![
             (("1d", today(), 1, "1d"), TimeWindow::Day(1)),
             (("10d", today(), 10, "10d"), TimeWindow::Day(10)),
             (("100d", today(), 100, "100d"), TimeWindow::Day(100)),
             (("1w", today(), 7, "1w"), TimeWindow::Week(1)),
             (("7w", today(), 49, "7w"), TimeWindow::Week(7)),
-            (("10w", today(), 700, "10w"), TimeWindow::Week(10)),
+            (("10w", today(), 70, "10w"), TimeWindow::Week(10)),
             (("20y", date(1, 1, 2020), 7305, "20y"), TimeWindow::Year(20)),
-            (("1y", date(1, 1, 2020), 7305, "1y"), TimeWindow::Year(1)),
             (("20y", date(1, 1, 2021), 7305, "20y"), TimeWindow::Year(20)),
             (("1y", date(1, 1, 2020), 366, "1y"), TimeWindow::Year(1)),
             (("1y", date(1, 1, 2021), 365, "1y"), TimeWindow::Year(1)),
             (("1m", date(1, 1, 2021), 31, "1m"), TimeWindow::Month(1)),
             (("12m", date(1, 1, 2021), 365, "12m"), TimeWindow::Month(12)),
-            (("1m", date(1, 1, 2021), 365, "1m"), TimeWindow::Month(1)),
             (("", today(), 1, "1d"), TimeWindow::Day(1)),
         ];
 
         for (i, t) in tests.iter().enumerate() {
-            println!("test_parse_timewindow#{}", i);
+            println!("test_parse_time_window#{}", i);
 
             let (lifetime_spec, lifetime_exp) = t;
             let (input_str, start_date, duration_days, to_str) = lifetime_spec;
@@ -805,9 +829,60 @@ mod tests {
                 *lifetime_exp,
             );
             // this make sense only with the assertion above
-            //assert_eq!(lifetime_exp.get_days_since(start_date), *duration_days);
+            assert_eq!(lifetime_exp.get_days_since(start_date), *duration_days);
             // to string
             assert_eq!(lifetime_exp.to_string(), *to_str);
+        }
+    }
+
+    #[test]
+    fn test_ranges() {
+        let tests = vec![
+            (today(), TimeWindow::Day(1), (today(), after(1)), after(1)),
+            (today(), TimeWindow::Week(1), (today(), after(7)), after(7)),
+            (
+                date(3, 1, 2000),
+                TimeWindow::Week(1),
+                (date(3, 1, 2000), date(10, 1, 2000)),
+                date(10, 1, 2000),
+            ),
+        ];
+
+        for (i, t) in tests.iter().enumerate() {
+            println!("test_ranges#{}", i);
+
+            let (window_from, window_exp, range_exp, offset_exp) = t;
+            println!(
+                "{} - {}:{} -> {}",
+                window_from.format("%A %d.%m"),
+                range_exp.0.format("%A %d.%m"),
+                range_exp.1.format("%A %d.%m"),
+                offset_exp.format("%A %d.%m")
+            );
+            // this make sense only with the assertion above
+            assert_eq!(window_exp.range(window_from), *range_exp);
+            assert_eq!(window_exp.end_date(window_from), range_exp.1.pred());
+            assert_eq!(window_exp.offset(window_from), *offset_exp)
+        }
+    }
+
+    #[test]
+    fn test_tags() {
+        let tests = vec![(
+            "skill:Design",
+            Tag::Feature("Design".to_string()),
+            ("design", "Design", "feat:Design"),
+        )];
+
+        for (i, t) in tests.iter().enumerate() {
+            println!("test_tags#{}", i);
+            let (tag_in, tag_exp, tag_shapes) = t;
+            let (slug, label, full) = tag_shapes;
+
+            assert_eq!(Tag::from_str(tag_in).unwrap(), *tag_exp);
+            assert_eq!(tag_exp.slug(), *slug);
+            assert_eq!(tag_exp.to_string(), *label);
+            assert_eq!(tag_exp.to_string_full(), *full);
         }
     }
 }
