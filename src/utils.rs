@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate};
 use rand::Rng;
 
 /// split  a string in two pieces
@@ -12,9 +12,10 @@ pub fn split_once(s: &str, sep: char) -> Option<(&str, &str)> {
 
 /// Returns the current date
 pub fn today() -> NaiveDate {
-    Utc::today().naive_utc()
+    Local::today().naive_utc()
 }
 
+#[cfg(test)]
 pub fn after(days: i64) -> NaiveDate {
     today() + Duration::days(days)
 }

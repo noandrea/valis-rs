@@ -8,6 +8,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, LineWriter, Write};
 use std::path::Path;
 
+use super::utils;
+
 const TABLE_ENTITIES: &str = "ENTITIES";
 const TABLE_TAGS: &str = "TAGS";
 const TABLE_ACL: &str = "ACL";
@@ -62,7 +64,7 @@ fn tag_key(t: &Tag, e: &Entity) -> String {
     format!("{}:{}:{}", t.prefix(), t.slug(), e.uid())
 }
 fn handle_key(p: &str, v: &str) -> String {
-    valis::hash(&valis::slugify(format!("{}:{}", p, v)))
+    utils::hash(&valis::slugify(format!("{}:{}", p, v)))
 }
 fn str(v: &sled::IVec) -> String {
     String::from_utf8_lossy(v).to_string()
@@ -95,7 +97,7 @@ impl DataStore {
         let system = db.open_tree(TABLE_SYSTEM)?;
         // generate salt for password
         let salt: String = (0..64).map(|_| random::<char>()).collect();
-        let salt_hash: &str = &valis::hash(&salt);
+        let salt_hash: &str = &utils::hash(&salt);
         system.insert("password:salt", salt_hash)?;
         // datastore
         Ok(DataStore {
@@ -195,7 +197,7 @@ impl DataStore {
         limit: usize,
         offset: usize,
     ) -> Vec<Entity> {
-        let prefix_str = valis::prefix(&since.to_string(), &until.pred().to_string());
+        let prefix_str = utils::prefix(&since.to_string(), &until.pred().to_string());
         // fetch all the stuff
         self.actions
             .scan_prefix(prefix_str)
@@ -322,6 +324,7 @@ impl DataStore {
 }
 #[cfg(test)]
 mod tests {
+    use super::utils::*;
     use super::*;
     use valis::*;
 
@@ -401,24 +404,24 @@ mod tests {
         ];
         data.iter().for_each(|(name, class, nad, sp)| {
             let mut e = Entity::from(name, class).unwrap().with_sponsor(sp);
-            e.next_action(valis::date_from_str(nad).unwrap(), "yea".to_string());
+            e.next_action(utils::date_from_str(nad).unwrap(), "yea".to_string());
             ds.insert(&e).unwrap();
         });
 
         // test
-        let (s, u) = TimeWindow::Day(1).range(&valis::date(1, 1, 2021));
+        let (s, u) = TimeWindow::Day(1).range(&utils::date(1, 1, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 1);
 
-        let (s, u) = TimeWindow::Day(2).range(&valis::date(1, 1, 2021));
+        let (s, u) = TimeWindow::Day(2).range(&utils::date(1, 1, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 2);
 
-        let (s, u) = TimeWindow::Year(1).range(&valis::date(1, 1, 2021));
+        let (s, u) = TimeWindow::Year(1).range(&utils::date(1, 1, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 6);
 
-        let (s, u) = TimeWindow::Year(1).range(&valis::date(1, 2, 2021));
+        let (s, u) = TimeWindow::Year(1).range(&utils::date(1, 2, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 2);
 

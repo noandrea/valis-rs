@@ -75,6 +75,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     // first, see if there is the config dir
     let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .expect("error! cannot establish project home dir! ");
+
     // data path
     if !dirs.data_dir().exists() {
         match prompts::confirm("The VALIS data dir does not exists, can I create it?", Yes) {
@@ -91,6 +92,19 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     // Load the datastore
     let db_path = dirs.data_dir().join(Path::new(DB_FOLDER));
     let mut ds = DataStore::open(db_path.as_path())?;
+    // import command first of all
+    if let Some(("import", c)) = matches.subcommand() {
+        let default_path = dirs
+            .data_dir()
+            .join("export.json")
+            .to_string_lossy()
+            .to_string();
+        let export_path = c.value_of("path").unwrap_or(&default_path);
+        ds.import(Path::new(export_path), ExportFormat::Json)?;
+        println!("dataset imported from {}", export_path);
+        return Ok(());
+    }
+
     // this is instead the config path
     let cfg_path = dirs.preference_dir().join(CFG_USER);
     // fist check if the datastore has content
@@ -144,7 +158,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
     .expect("invalid credentials!");
     // ask for caching
-    if let None = cached_pwd {
+    if cached_pwd.is_none() {
         if let Yes = prompts::confirm("would you like to cache your password?", Yes) {
             cfg.pwd = principal.get_pwd_hash();
             cfg.save(&cfg_path)?;
@@ -185,9 +199,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
             let ranges = vec![
                 ("Past", TimeWindow::UpTo),
-                ("Today", TimeWindow::SingleDay),
-                ("Within 3 days", TimeWindow::Day(3)),
-                ("Within a week", TimeWindow::Day(4)),
+                ("Today", TimeWindow::Day(1)),
+                ("Tomorrow", TimeWindow::Day(1)),
+                ("Within a week", TimeWindow::Day(6)),
                 ("Within 2 weeks", TimeWindow::Day(7)),
                 ("Within 4 weeks", TimeWindow::Day(14)),
             ];
@@ -195,12 +209,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             p.head(vec!["Name", "", "", "Next Date", "Message"]);
             p.sep();
 
-            let mut target_date = valis::today();
+            let mut target_date = utils::today();
+            println!("{} ", target_date);
             for range in ranges {
                 let (label, r) = range;
                 let (since, until) = r.range(&target_date);
+                println!("{} - {}", since, until);
                 let items = ds.agenda(&since, &until, 0, 0);
-                if items.len() == 0 {
+                if items.is_empty() {
                     continue;
                 }
                 // print header
@@ -230,7 +246,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 let pattern = values.collect::<Vec<&str>>().join(" ");
                 // no results
                 let res = ds.search(&pattern);
-                if res.len() == 0 {
+                if res.is_empty() {
                     println!("No matches found ¯\\_(ツ)_/¯");
                     return Ok(());
                 }
@@ -244,21 +260,19 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
         }
         Some(("export", c)) => {
-            let default_path = db_path.join("export.json").to_string_lossy().to_string();
+            let default_path = dirs
+                .data_dir()
+                .join("export.json")
+                .to_string_lossy()
+                .to_string();
             let export_path = c.value_of("path").unwrap_or(&default_path);
             ds.export(Path::new(export_path), ExportFormat::Json)?;
             println!("dataset exported in {}", export_path);
         }
-        Some(("import", c)) => {
-            let default_path = db_path.join("export.json").to_string_lossy().to_string();
-            let export_path = c.value_of("path").unwrap_or(&default_path);
-            ds.import(Path::new(export_path), ExportFormat::Json)?;
-            println!("dataset imported from {}", export_path);
-        }
         Some(("today", c)) => {
             println!("press Esc or q to quit");
-            let mut items = ds.agenda_until(&valis::today(), 0, 0);
-            while items.len() > 0 {
+            let mut items = ds.agenda_until(&utils::today(), 0, 0);
+            while !items.is_empty() {
                 let target = match prompts::edit_entities(&items) {
                     Some(t) => t,
                     None => break,
@@ -266,23 +280,24 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 // TODO
                 let x = prompts::edit_entity(target.clone());
                 ds.update(&x)?;
-                items = ds.agenda_until(&valis::today(), 0, 0);
+                items = ds.agenda_until(&utils::today(), 0, 0);
             }
         }
         Some((&_, _)) | None => {
-            let today = valis::today();
+            let today = utils::today();
             let items = ds.agenda(&today, &today.succ(), 0, 0);
-            if items.len() == 0 {
+            if items.is_empty() {
                 println!("Nothing for today");
                 return Ok(());
             }
 
-            let mut p = Printer::new(vec![30, 4, 4, 10, 50]);
+            let mut p = Printer::new(vec![30, 3, 3, 3, 10, 50]);
             // title
             p.head(vec![
                 "Name",
                 "Status",
                 "Relationship",
+                "Events",
                 "Next Date",
                 "Message",
             ]);
@@ -292,6 +307,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     Str(e.name.to_string()),
                     Str(e.state.emoji()),
                     Str(e.quality.emoji()),
+                    Cnt(311),
                     Date(e.next_action_date),
                     Str(e.get_next_action_headline()),
                 ])
@@ -308,10 +324,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
 #[derive(Debug)]
 enum Cell {
-    Pcent(f32),      // percent
     Str(String),     // string
-    Cnt(usize),      // counter
     Date(NaiveDate), // date
+    Cnt(usize),
     Sep,
 }
 
@@ -362,11 +377,6 @@ impl Printer {
                                 .format("%a, %d.%m.%y")
                                 .to_string()
                                 .pad(s, ' ', Left, false),
-                            Pcent(v) => {
-                                let p = v * 100.0;
-                                let b = (p as usize * s) / 100; // bar length
-                                format!("{:.2}", p).pad(b, self.progress, Right, false)
-                            }
                             Sep => "".pad(s, self.row_sep, Alignment::Right, false),
                         }
                     })
@@ -395,19 +405,16 @@ mod tests {
             Str("One".to_string()),
             // Amt(80.0),
             Cnt(100),
-            Pcent(0.1043), // completion percentage
         ]);
         p.row(vec![
             Str("Two".to_string()),
             // Amt(59.0),
             Cnt(321),
-            Pcent(0.0420123123), // completion percentage
         ]);
         p.row(vec![
             Str("Three".to_string()),
             // Amt(220.0),
             Cnt(11),
-            Pcent(0.309312321), // completion percentage
         ]);
         p.sep();
         assert_eq!(p.data.len(), 6);

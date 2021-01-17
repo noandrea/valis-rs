@@ -17,7 +17,6 @@ use std::str::FromStr;
 pub use uuid::Uuid;
 
 mod utils;
-pub use utils::*;
 
 // Let's use generic errors
 type Result<T> = std::result::Result<T, ValisError>;
@@ -57,8 +56,8 @@ fn extract_date(text: &str) -> Option<NaiveDate> {
         .captures(text)
         .and_then(|c| c.get(1).map(|m| m.as_str()));
     match ds {
-        Some(d) => date_from_str(d),
-        None => Some(today()),
+        Some(d) => utils::date_from_str(d),
+        None => Some(utils::today()),
     }
 }
 
@@ -121,7 +120,7 @@ impl TimeWindow {
     pub fn range(&self, since: &NaiveDate) -> (NaiveDate, NaiveDate) {
         let since = since.clone();
         match self {
-            Self::UpTo => (date(01, 01, 0000), since),
+            Self::UpTo => (utils::date(1, 1, 0000), since),
             _ => (since, since + Duration::days(self.get_days_since(&since))),
         }
     }
@@ -363,7 +362,7 @@ pub struct Event {
 impl Event {
     pub fn new() -> Event {
         Event {
-            recorded_at: now_local(),
+            recorded_at: utils::now_local(),
             kind: EventType::Action("raw".to_string(), "msg".to_string(), 1),
             content: None,
             actors: vec![Actor::Lead(Uuid::new_v4())],
@@ -518,7 +517,7 @@ impl Entity {
     pub fn get_progress(&self, d: &Option<NaiveDate>) -> f32 {
         let d = match d {
             Some(d) => *d,
-            None => today(),
+            None => utils::today(),
         };
         // get the time range
         let (start, end) = (self.updated_on, self.next_action_date);
@@ -572,7 +571,7 @@ impl Entity {
 
     pub fn with_password(mut self, pass: Option<&String>) -> Self {
         self.pass = match pass {
-            Some(p) => Some(hash(p)),
+            Some(p) => Some(utils::hash(p)),
             None => None,
         };
         self
@@ -662,12 +661,12 @@ impl Entity {
             "",
             vec![],
             class,
-            RelState::Active(today(), None),
-            RelQuality::Neutral(today(), None),
+            RelState::Active(utils::today(), None),
+            RelQuality::Neutral(utils::today(), None),
             uid,
-            today(),
-            today(),
-            after(1),
+            utils::today(),
+            utils::today(),
+            utils::today().succ(),
             "to update",
             vec![],
             vec![],
@@ -718,7 +717,7 @@ pub fn id(prefix: &str, value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use utils::*;
     #[test]
     fn test_tx() {
         let tests = vec![

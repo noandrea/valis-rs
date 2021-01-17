@@ -1,3 +1,4 @@
+use super::utils;
 use ::valis::{Entity, Tag, TimeWindow};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input, Password, Select};
@@ -165,7 +166,7 @@ pub fn new_entity() -> Entity {
     // we have enough to create the entity
     let mut e = Entity::from(&name, class).unwrap();
     // action
-    let rtw = valis::random_timewindow(1, 12, Some('w'));
+    let rtw = utils::random_timewindow(1, 12, Some('w'));
     let tw = _s(
         &format!("when shall you be reminded about {}", name),
         vec![
@@ -177,7 +178,7 @@ pub fn new_entity() -> Entity {
         ],
     );
 
-    let nad = TimeWindow::from_str(&tw).unwrap().end_date(&valis::today());
+    let nad = TimeWindow::from_str(&tw).unwrap().end_date(&utils::today());
     let nan = _e("leave a note for the reminder");
     e.next_action(nad, nan);
 
@@ -207,14 +208,14 @@ pub fn new_entity() -> Entity {
     e
 }
 
-pub fn edit_entities(items: &Vec<Entity>) -> Option<&Entity> {
+pub fn edit_entities(items: &[Entity]) -> Option<&Entity> {
     let opts = items.iter().map(|e| (e.name(), e)).collect();
     _s_opt("Which one", opts)
 }
 
 pub fn edit_entity(mut target: Entity) -> Entity {
     // action
-    let rtw = valis::random_timewindow(1, 12, Some('w'));
+    let rtw = utils::random_timewindow(1, 12, Some('w'));
     let tw = _s(
         &"when shall you be reminded about it",
         vec![
@@ -226,7 +227,7 @@ pub fn edit_entity(mut target: Entity) -> Entity {
         ],
     );
 
-    let nad = TimeWindow::from_str(&tw).unwrap().offset(&valis::today());
+    let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
     let nan = _e(&target.get_next_action_headline());
     target.next_action(nad, nan);
     target
