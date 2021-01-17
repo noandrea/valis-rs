@@ -326,6 +326,37 @@ mod tests {
     use valis::*;
 
     #[test]
+    fn test_import_export() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        let p = d.path().join("export.json");
+        // create a datastore
+        let mut orig = DataStore::open(&d.path().join("orig")).unwrap();
+        // insert records
+        let e = Entity::from("bob", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_handle("email", "bob@acme.com");
+        assert_eq!(orig.insert(&e).is_ok(), true);
+        let e = Entity::from("alice", "person")
+            .unwrap()
+            .with_sponsor(&e)
+            .with_handle("email", "alice@acme.com");
+        assert_eq!(orig.insert(&e).is_ok(), true);
+        // now export
+        assert_eq!(orig.export(&p, ExportFormat::Json).is_ok(), true);
+        // create a new datastore
+        let mut copy = DataStore::open(&d.path().join("copy")).unwrap();
+        // import
+        assert_eq!(copy.import(&p, ExportFormat::Json).is_ok(), true);
+        // test
+        assert_eq!(orig.entities.len(), copy.entities.len());
+        for r in orig.entities.iter() {
+            let (k, v) = r.unwrap();
+            assert_eq!(copy.entities.get(k).unwrap().unwrap(), v);
+        }
+    }
+
+    #[test]
     fn test_datastore() {
         let d = tempdir::TempDir::new("valis").unwrap();
         println!("dir is {:?}", d);
