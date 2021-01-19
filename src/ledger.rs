@@ -1,4 +1,4 @@
-use ::valis::{self, Entity, Tag};
+use ::valis::{self, Entity, Event, EventType, Tag};
 use chrono::NaiveDate;
 use rand::random;
 use simsearch::SimSearch;
@@ -14,10 +14,12 @@ const TABLE_ENTITIES: &str = "ENTITIES";
 const TABLE_TAGS: &str = "TAGS";
 const TABLE_ACL: &str = "ACL";
 const TABLE_EDGES: &str = "EDGES";
-const TABLE_EVENTS: &str = "EVENTS";
 const TABLE_ACTIONS: &str = "ACTIONS";
 const TABLE_IDS: &str = "IDS";
 const TABLE_SYSTEM: &str = "SYSTEM";
+
+const TABLE_EVENTS: &str = "EVENTS";
+const TABLE_ENTITY_EVENT: &str = "ENTITY_EVENT";
 
 // Let's use generic errors
 type Result<T> = std::result::Result<T, DataError>;
@@ -52,9 +54,10 @@ impl From<std::io::Error> for DataError {
     }
 }
 
+#[derive(PartialEq)]
 pub enum ExportFormat {
     Json,
-    Binary,
+    NQuad,
 }
 
 fn action_key(e: &Entity) -> String {
@@ -81,6 +84,8 @@ pub struct DataStore {
     edges: sled::Tree,
     acl: sled::Tree,
     system: sled::Tree,
+    events: sled::Tree,
+    entity_event: sled::Tree,
 }
 
 impl DataStore {
@@ -95,6 +100,9 @@ impl DataStore {
         let edges = db.open_tree(TABLE_EDGES)?;
         let acl = db.open_tree(TABLE_ACL)?;
         let system = db.open_tree(TABLE_SYSTEM)?;
+        // events
+        let events = db.open_tree(TABLE_EVENTS)?;
+        let entity_event = db.open_tree(TABLE_ENTITY_EVENT)?;
         // generate salt for password
         let salt: String = (0..64).map(|_| random::<char>()).collect();
         let salt_hash: &str = &utils::hash(&salt);
@@ -109,6 +117,8 @@ impl DataStore {
             edges,
             acl,
             system,
+            events,
+            entity_event,
         })
     }
 
@@ -124,6 +134,11 @@ impl DataStore {
 
     pub fn export(&self, path: &Path, format: ExportFormat) -> Result<()> {
         let mut file = LineWriter::new(File::create(path)?);
+
+        if format == ExportFormat::NQuad {
+            return Err(DataError::NotImplemented);
+        }
+
         match format {
             ExportFormat::Json => self.entities.iter().for_each(|r| {
                 let (_, raw) = r.unwrap();
@@ -132,21 +147,25 @@ impl DataStore {
                 file.write(j.as_bytes()).ok();
                 file.write("\n".as_bytes()).ok();
             }),
-            ExportFormat::Binary => {}
+            _ => {}
         };
         file.flush()?;
         Ok(())
     }
 
     pub fn import(&mut self, path: &Path, format: ExportFormat) -> Result<()> {
+        if format == ExportFormat::NQuad {
+            return Err(DataError::NotImplemented);
+        }
         let file = File::open(path)?;
+
         match format {
             ExportFormat::Json => BufReader::new(file).lines().for_each(|r| {
                 let line = r.unwrap();
                 let e: Entity = serde_json::from_str(&line).unwrap();
                 self.insert(&e).unwrap();
             }),
-            ExportFormat::Binary => {}
+            _ => {}
         };
         Ok(())
     }
@@ -155,6 +174,53 @@ impl DataStore {
     ///
     pub fn search(&self, pattern: &str) -> Vec<Entity> {
         vec![]
+    }
+
+    /// Get a list of events for an entity
+    ///
+    /// Retrieve the list of events for a n entity
+    pub fn events(&self, subject: &Entity, include_logs: bool) -> Vec<Event> {
+        let prefix: &str = &subject.uid();
+        self.entity_event
+            .scan_prefix(prefix)
+            .map(|r| {
+                let (_k, v) = r.unwrap();
+                println!("{} / {} -> {}", prefix, str(&_k), str(&v));
+                let raw = self.events.get(v).unwrap().unwrap();
+                bincode::deserialize(&raw).unwrap()
+            })
+            .filter(|e: &Event| include_logs || !e.kind.is_log())
+            .collect()
+    }
+
+    /// Records an event
+    ///
+    /// An event is recorded in the tree events that is
+    /// <uid, Event>
+    /// and for all the actors in the entity_event as
+    /// <actor_uid:event_uid, event_uid>
+    fn record(&mut self, event: &Event) -> Result<valis::Uuid> {
+        // consistency check
+        if event.actors.is_empty() {
+            return Err(DataError::GenericError("no actors for event".to_string()));
+        }
+        // serialize
+        let k: &str = &event.uid();
+        let v = bincode::serialize(event).unwrap();
+        // insert the event
+        self.events.insert(k, v).expect("cannot record event");
+        // record the connection between event and entity
+        for actor in event.actors.iter() {
+            // now insert <actor_uid:event_uid, event_uid>
+            let ak: &str = &format!(
+                "{}:{}:{}",
+                actor.uid(),
+                event.recorded_at.timestamp(),
+                event.uid()
+            );
+            self.entity_event.insert(ak, k)?;
+        }
+        Ok(event.uid)
     }
 
     /// Retrieve an entity by one of its ids
@@ -224,7 +290,11 @@ impl DataStore {
         if principal.uid() != principal.sponsor_uid() {
             return Err(DataError::InitializationError);
         };
-        self.insert(principal)
+        let uid = self.insert(principal)?;
+        // create a event log
+        self.record(&Event::log("init", principal, None))?;
+        // return the entity uid
+        Ok(uid)
     }
 
     /// Adds a new entity to the database
@@ -247,7 +317,11 @@ impl DataStore {
             }
         }
         // all good
-        self.insert(entity)
+        let uid = self.insert(entity)?;
+        // create a event log
+        self.record(&Event::log("added", entity, None))?;
+        // return the entity uid
+        Ok(uid)
     }
 
     pub fn update(&mut self, entity: &Entity) -> Result<valis::Uuid> {
@@ -380,6 +454,14 @@ mod tests {
         assert_eq!(ds.entities.len(), 1);
     }
 
+    // // TODO: remove
+    // assert_eq!(ds.events.len(), 2);
+    // println!("owner:{}", owner.uid());
+    // for r in ds.entity_event.iter() {
+    //     let (k, v) = r.unwrap();
+    //     println!("{}  -  {}", str(&k), str(&v));
+    // }
+
     #[test]
     fn test_setup() {
         let d = tempdir::TempDir::new("valis").unwrap();
@@ -393,8 +475,12 @@ mod tests {
         // insert
         ds.init(&owner).ok();
         ds.add(&root).ok();
+        // now count events
 
-        // setup
+        let evts = ds.events(&owner, true);
+        assert_eq!(evts.len(), 1);
+        assert_eq!(evts[0].actors[0].uid(), owner.uid());
+
         // insert data
         let data = vec![
             ("A", "person", "01.01.2021", &owner),
@@ -445,10 +531,6 @@ mod tests {
         let bob = bob.with_next_action(date(11, 1, 2000), "something".to_string());
         assert_eq!(ds.update(&bob).is_ok(), true);
         // check that there is only one action in the db
-        for r in ds.actions.iter() {
-            let (k, v) = r.unwrap();
-            println!("{}:{}", str(&k), str(&v));
-        }
         assert_eq!(ds.actions.len(), 1);
         // now add alice
         let alice = Entity::from("alice", "person")

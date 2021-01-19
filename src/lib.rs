@@ -27,12 +27,19 @@ pub enum ValisError {
     InvalidDateFormat(String),
     InvalidAmount(String),
     GenericError(String),
+    InputError(String),
     Unauthorized,
 }
 
 impl fmt::Display for ValisError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self)
+    }
+}
+
+impl From<uuid::Error> for ValisError {
+    fn from(error: uuid::Error) -> Self {
+        Self::InputError(error.to_string())
     }
 }
 
@@ -329,10 +336,19 @@ impl fmt::Display for ACL {
 /// The other use for the weight (with the derived metric of event frequency)
 /// is to monitor entities activity to get alarms about trends.
 ///
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum EventType {
     Log(String),
     Action(String, String, usize),
+}
+
+impl EventType {
+    pub fn is_log(&self) -> bool {
+        match self {
+            Self::Log(_) => true,
+            _ => false,
+        }
+    }
 }
 
 /// The Actor is a participant of an event
@@ -348,13 +364,42 @@ pub enum Actor {
     Background(Uuid),
 }
 
+impl Actor {
+    pub fn from_str(input: &str) -> Result<Actor> {
+        match utils::split_once(input, ':') {
+            Some(("lead", v)) => Ok(Actor::Lead(Uuid::from_str(v)?)),
+            Some(("star", v)) => Ok(Actor::Starring(Uuid::from_str(v)?)),
+            Some(("back", v)) => Ok(Actor::Background(Uuid::from_str(v)?)),
+            _ => Err(ValisError::InputError("unrecognized".to_string())),
+        }
+    }
+
+    pub fn uid(&self) -> String {
+        match self {
+            Self::Lead(uid) => utils::id(uid),
+            Self::Starring(uid) => utils::id(uid),
+            Self::Background(uid) => utils::id(uid),
+        }
+    }
+}
+impl fmt::Display for Actor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Lead(uid) => write!(f, "lead:{}", utils::id(uid)),
+            Self::Starring(uid) => write!(f, "star:{}", utils::id(uid)),
+            Self::Background(uid) => write!(f, "back:{}", utils::id(uid)),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Event {
-    recorded_at: DateTime<FixedOffset>,
-    kind: EventType,
-    content: Option<String>,
+    pub uid: Uuid,
+    pub recorded_at: DateTime<FixedOffset>,
+    pub kind: EventType,
+    pub content: Option<String>,
     // Entities
-    actors: Vec<Actor>,
+    pub actors: Vec<Actor>,
     // ACL
     visibility: Vec<ACL>,
 }
@@ -362,6 +407,7 @@ pub struct Event {
 impl Event {
     pub fn new() -> Event {
         Event {
+            uid: Uuid::new_v4(),
             recorded_at: utils::now_local(),
             kind: EventType::Action("raw".to_string(), "msg".to_string(), 1),
             content: None,
@@ -369,12 +415,44 @@ impl Event {
             visibility: vec![],
         }
     }
+
+    pub fn log(title: &str, subject: &Entity, msg: Option<String>) -> Event {
+        Event {
+            uid: Uuid::new_v4(),
+            recorded_at: utils::now_local(),
+            kind: EventType::Log(title.to_owned()),
+            content: msg,
+            actors: vec![Actor::Lead(subject.uid)],
+            visibility: vec![],
+        }
+    }
+
+    pub fn action(
+        source: &str,
+        name: &str,
+        weight: usize,
+        content: Option<String>,
+        actors: &[Actor],
+    ) -> Event {
+        Event {
+            uid: Uuid::new_v4(),
+            recorded_at: utils::now_local(),
+            kind: EventType::Action(source.to_owned(), name.to_owned(), weight),
+            content: content,
+            actors: actors.to_owned(),
+            visibility: vec![],
+        }
+    }
+
+    pub fn uid(&self) -> String {
+        utils::id(&self.uid)
+    }
 }
 
 /// The RelQuality describes the quality of a relationship in a moment in time.
 ///
 /// it is bound to a thing and it's relative to the root entity
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum RelQuality {
     Neutral(NaiveDate, Option<NaiveDate>),  // neutral
     Formal(NaiveDate, Option<NaiveDate>),   // businesslike
@@ -393,9 +471,20 @@ impl RelQuality {
             Self::Hostile(_, _) => "😠".to_owned(),
         }
     }
+
+    pub fn from_emoji(emoji: &str, since: NaiveDate, to: Option<NaiveDate>) -> Option<Self> {
+        match emoji {
+            "😐" => Some(Self::Neutral(since, to)),
+            "👔" => Some(Self::Formal(since, to)),
+            "🙂" => Some(Self::Friendly(since, to)),
+            "☹️" => Some(Self::Tense(since, to)),
+            "😠" => Some(Self::Hostile(since, to)),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum RelType {
     Role(String, NaiveDate, Option<NaiveDate>), // this is the main context
     BelongsTo(NaiveDate, NaiveDate),            // this a context root
@@ -409,12 +498,6 @@ impl RelType {
             Self::BelongsTo(_s, _u) => "bt".to_string(),
             Self::MemberOf(_s, _u) => "mo".to_string(),
         }
-    }
-}
-
-impl PartialEq for RelType {
-    fn eq(&self, other: &Self) -> bool {
-        slugify(self.to_string()) == slugify(other.to_string())
     }
 }
 
@@ -464,8 +547,6 @@ pub struct Entity {
 ///
 ///
 impl Entity {
-    pub fn bin(&self) {}
-
     // Getters
     pub fn name(&self) -> &str {
         &self.name[..]
@@ -577,6 +658,13 @@ impl Entity {
         self
     }
 
+    pub fn change_quality(&mut self, new: RelQuality) {
+        if self.quality == new {
+            return;
+        }
+        self.quality = new;
+    }
+
     pub fn authorized(&self, pwd: Option<&String>) -> Result<()> {
         match &self.pass {
             Some(ph) => match pwd.is_some() && pwd.unwrap() == ph {
@@ -674,10 +762,10 @@ impl Entity {
     }
 
     pub fn uid(&self) -> String {
-        self.uid.to_simple().to_string()
+        utils::id(&self.uid)
     }
     pub fn sponsor_uid(&self) -> String {
-        self.sponsor.to_simple().to_string()
+        utils::id(&self.sponsor)
     }
 
     pub fn from_str(s: &str) -> Result<Entity> {

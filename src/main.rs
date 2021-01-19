@@ -210,11 +210,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             p.sep();
 
             let mut target_date = utils::today();
-            println!("{} ", target_date);
             for range in ranges {
                 let (label, r) = range;
                 let (since, until) = r.range(&target_date);
-                println!("{} - {}", since, until);
                 let items = ds.agenda(&since, &until, 0, 0);
                 if items.is_empty() {
                     continue;
@@ -291,7 +289,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 return Ok(());
             }
 
-            let mut p = Printer::new(vec![30, 3, 3, 3, 10, 50]);
+            let mut p = Printer::new(vec![30, 3, 3, 3, 13, 80]);
             // title
             p.head(vec![
                 "Name",

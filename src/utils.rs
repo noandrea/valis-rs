@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset, Local, NaiveDate};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate};
 use rand::Rng;
 
 /// split  a string in two pieces
@@ -8,6 +8,10 @@ pub fn split_once(s: &str, sep: char) -> Option<(&str, &str)> {
         0 | 1 => None,
         _ => Some((x[0], x[1])),
     }
+}
+
+pub fn id(uid: &uuid::Uuid) -> String {
+    uid.to_simple().to_string()
 }
 
 /// Returns the current date

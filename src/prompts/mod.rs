@@ -1,5 +1,5 @@
 use super::utils;
-use ::valis::{Entity, Tag, TimeWindow};
+use ::valis::{Entity, RelQuality, Tag, TimeWindow};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input, Password, Select};
 use std::str::FromStr;
@@ -178,7 +178,7 @@ pub fn new_entity() -> Entity {
         ],
     );
 
-    let nad = TimeWindow::from_str(&tw).unwrap().end_date(&utils::today());
+    let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
     let nan = _e("leave a note for the reminder");
     e.next_action(nad, nan);
 
@@ -228,7 +228,24 @@ pub fn edit_entity(mut target: Entity) -> Entity {
     );
 
     let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
-    let nan = _e(&target.get_next_action_headline());
+    let nan = _e(&target.next_action_note);
     target.next_action(nad, nan);
+    // ask for the quality
+    let q = _s(
+        &format!("how is the relationship status? {}", target.quality.emoji()),
+        vec![
+            ("Unchanged", "none"),
+            ("Neutral", "😐"),
+            ("Formal", "👔"),
+            ("Friendly", "🙂"),
+            ("Tense", "☹️"),
+            ("Hostile", "😠"),
+        ],
+    );
+    match RelQuality::from_emoji(q, utils::today(), None) {
+        Some(q) => target.change_quality(q),
+        _ => {}
+    };
+    // type
     target
 }
