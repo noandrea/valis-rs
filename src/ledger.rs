@@ -386,7 +386,8 @@ impl DataStore {
         // insert relations
         entity.relationships.iter().for_each(|r| {
             let ik = format!("{}:{}", entity.uid(), r.kind.get_label());
-            self.edges.insert(ik, k).expect("cannot insert edge");
+            let v: &str = &utils::id(&r.target);
+            self.edges.insert(ik, v).expect("cannot insert edge");
         });
         // insert acl
         entity.visibility.iter().for_each(|a| {
