@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserConfig {
     pub uid: String,
     pub pwd: Option<String>,
@@ -28,5 +28,25 @@ impl UserConfig {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, toml::to_string(self).unwrap())?;
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_user() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        let c = d.path().join("config.toml");
+
+        let uc = UserConfig {
+            uid: "a".to_owned(),
+            pwd: Some("b".to_owned()),
+        };
+        uc.save(&c);
+
+        let uc2 = UserConfig::load(&c);
+        assert_eq!(uc2.is_ok(), true);
+        assert_eq!(uc, uc2.unwrap().unwrap());
     }
 }

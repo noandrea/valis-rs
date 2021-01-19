@@ -200,7 +200,7 @@ pub fn new_entity() -> Entity {
             ];
             let prefix = _s("tag type", tags);
             let label = _i("what is the tag label", Feat::NonEmpty);
-            e = e.tag(Tag::from(&prefix, &label).unwrap());
+            e = e.tag(Tag::from(&prefix, &label));
         }
     };
 

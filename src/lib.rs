@@ -47,25 +47,7 @@ impl Error for ValisError {}
 
 // initialize regexp
 lazy_static! {
-    static ref RE_HASHTAG: Regex = Regex::new(r"^[#\.]([a-zA-Z][0-9a-zA-Z_-]*)$").unwrap();
     static ref RE_TIMEWINDOW: Regex = Regex::new(r"(([1-9]{1}[0-9]*)([dwmy]))").unwrap();
-    static ref RE_DATE: Regex = Regex::new(r"([0-3][0-9][0-1][0-9][1-9][0-9])").unwrap();
-}
-
-fn extract_hashtag(text: &str) -> Option<&str> {
-    RE_HASHTAG
-        .captures(text)
-        .and_then(|c| c.get(1).map(|m| m.as_str()))
-}
-
-fn extract_date(text: &str) -> Option<NaiveDate> {
-    let ds = RE_DATE
-        .captures(text)
-        .and_then(|c| c.get(1).map(|m| m.as_str()));
-    match ds {
-        Some(d) => utils::date_from_str(d),
-        None => Some(utils::today()),
-    }
 }
 
 fn extract_timewindow(text: &str) -> (&str, i64) {
@@ -235,8 +217,8 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn from(prefix: &str, label: &str) -> Result<Self> {
-        Self::from_str(&format!("{}:{}", prefix, label))
+    pub fn from(prefix: &str, label: &str) -> Self {
+        Self::from_str(&format!("{}:{}", prefix, label)).unwrap()
     }
 
     pub fn prefix(&self) -> &'static str {
@@ -279,6 +261,7 @@ impl FromStr for Tag {
             Some(("ctx role", v)) => Ok(Tag::Role(v.to_string())),
             Some(("ext role", v)) => Ok(Tag::Role(v.to_string())),
             Some(("sys", v)) => Ok(Tag::System(v.to_string())),
+            Some(("tag", v)) => Ok(Tag::Generic(v.to_string())),
             _ => Ok(Tag::Generic(s.to_string())),
         }
     }
@@ -303,7 +286,7 @@ impl fmt::Display for Tag {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ACL {
     Public,
     Sponsor, // message, email, webhook
@@ -315,7 +298,22 @@ impl fmt::Display for ACL {
         match self {
             Self::Public => write!(f, "public"),
             Self::Sponsor => write!(f, "sponsor"),
-            Self::Limited(tag) => write!(f, "{}", tag),
+            Self::Limited(tag) => write!(f, "{}:{}", tag.prefix(), tag.slug()),
+        }
+    }
+}
+
+impl FromStr for ACL {
+    type Err = ValisError;
+
+    fn from_str(s: &str) -> Result<ACL> {
+        match s {
+            "" | "public" => Ok(Self::Public),
+            "sponsor" => Ok(Self::Sponsor),
+            any => match utils::split_once(any, ':') {
+                Some((p, l)) => Ok(Self::Limited(Tag::from(p, l))),
+                None => Err(ValisError::InputError("cannot read acl".to_string())),
+            },
         }
     }
 }
@@ -561,8 +559,6 @@ impl Entity {
             .into_iter()
             .collect()
     }
-
-    pub fn add_handle(name: &str, val: &str) {}
 
     pub fn get_next_action_headline(&self) -> String {
         for l in self.next_action_note.split('\n') {
@@ -955,11 +951,51 @@ mod tests {
 
     #[test]
     fn test_tags() {
-        let tests = vec![(
-            "skill:Design",
-            Tag::Feature("Design".to_string()),
-            ("design", "Design", "feat:Design"),
-        )];
+        let tests = vec![
+            (
+                "skill:Design",
+                Tag::Feature("Design".to_string()),
+                ("design", "Design", "feat:Design"),
+            ),
+            (
+                "cat:Books & Magazines",
+                Tag::Group("Books & Magazines".to_string()),
+                (
+                    "books-magazines",
+                    "Books & Magazines",
+                    "group:Books & Magazines",
+                ),
+            ),
+            (
+                "link:https://meetvalis.com",
+                Tag::Link("https://meetvalis.com".to_string()),
+                (
+                    "https-meetvalis-com",
+                    "https://meetvalis.com",
+                    "link:https://meetvalis.com",
+                ),
+            ),
+            (
+                "Good",
+                Tag::Generic("Good".to_string()),
+                ("good", "Good", "tag:Good"),
+            ),
+            (
+                "tag:Better",
+                Tag::Generic("Better".to_string()),
+                ("better", "Better", "tag:Better"),
+            ),
+            (
+                "role:Project Manager",
+                Tag::Role("Project Manager".to_string()),
+                ("project-manager", "Project Manager", "role:Project Manager"),
+            ),
+            (
+                "sys:Admin",
+                Tag::System("Admin".to_string()),
+                ("admin", "Admin", "sys:Admin"),
+            ),
+        ];
 
         for (i, t) in tests.iter().enumerate() {
             println!("test_tags#{}", i);
@@ -971,5 +1007,34 @@ mod tests {
             assert_eq!(tag_exp.to_string(), *label);
             assert_eq!(tag_exp.to_string_full(), *full);
         }
+    }
+}
+
+#[test]
+fn test_acl() {
+    let tests = vec![
+        (
+            "group:Management",
+            ACL::Limited(Tag::Group("Management".to_string())),
+            (Ok(()), "group:management"),
+        ),
+        ("public", ACL::Public, (Ok(()), "public")),
+        ("", ACL::Public, (Ok(()), "public")),
+        ("sponsor", ACL::Sponsor, (Ok(()), "sponsor")),
+        ("whatever", ACL::Public, (Err(()), "")),
+    ];
+
+    for (i, t) in tests.iter().enumerate() {
+        println!("test_acl#{}", i);
+        let (acl_in, acl_exp, acl_shapes) = t;
+        let (res, label) = acl_shapes;
+
+        let acl = ACL::from_str(acl_in);
+        assert_eq!(acl.is_err(), res.is_err());
+        if acl.is_err() {
+            return;
+        }
+        assert_eq!(acl.unwrap(), *acl_exp);
+        assert_eq!(acl_exp.to_string(), *label);
     }
 }

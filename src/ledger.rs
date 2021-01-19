@@ -86,6 +86,8 @@ pub struct DataStore {
     system: sled::Tree,
     events: sled::Tree,
     entity_event: sled::Tree,
+    // search index
+    index: SimSearch<String>,
 }
 
 impl DataStore {
@@ -103,12 +105,14 @@ impl DataStore {
         // events
         let events = db.open_tree(TABLE_EVENTS)?;
         let entity_event = db.open_tree(TABLE_ENTITY_EVENT)?;
-        // generate salt for password
+        // search index
+        let index = SimSearch::new();
+        // generate salt for passwords
         let salt: String = (0..64).map(|_| random::<char>()).collect();
         let salt_hash: &str = &utils::hash(&salt);
         system.insert("password:salt", salt_hash)?;
         // datastore
-        Ok(DataStore {
+        let mut ds = DataStore {
             db,
             entities,
             actions,
@@ -119,7 +123,22 @@ impl DataStore {
             system,
             events,
             entity_event,
-        })
+            index,
+        };
+        // build the search index
+        ds.build_search_index();
+        // complete
+        Ok(ds)
+    }
+
+    fn build_search_index(&mut self) {
+        self.index = SimSearch::new();
+        self.entities.iter().for_each(|r| {
+            let (_, raw) = r.unwrap();
+            let e: Entity = bincode::deserialize(&raw).unwrap();
+            let data = format!("{} {}", e.name(), e.get_tags().join(" "));
+            self.index.insert(e.uid(), &data);
+        });
     }
 
     /// return if the database is empty
@@ -173,7 +192,14 @@ impl DataStore {
     /// Perform a search for a string in tags and transaction name
     ///
     pub fn search(&self, pattern: &str) -> Vec<Entity> {
-        vec![]
+        self.index
+            .search(pattern)
+            .iter()
+            .map(|id| {
+                let raw = self.entities.get(&id).unwrap().unwrap();
+                bincode::deserialize(&raw).unwrap()
+            })
+            .collect::<Vec<Entity>>()
     }
 
     /// Get a list of events for an entity
@@ -260,8 +286,8 @@ impl DataStore {
         &self,
         since: &NaiveDate,
         until: &NaiveDate,
-        limit: usize,
-        offset: usize,
+        _limit: usize,
+        _offset: usize,
     ) -> Vec<Entity> {
         let prefix_str = utils::prefix(&since.to_string(), &until.pred().to_string());
         // fetch all the stuff
@@ -453,6 +479,44 @@ mod tests {
         ds.insert(&bob).unwrap();
         // the db size should be the same
         assert_eq!(ds.entities.len(), 1);
+    }
+
+    #[test]
+    fn test_search() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        println!("dir is {:?}", d);
+        // open the datastore
+        let mut ds = DataStore::open(d.path()).unwrap();
+        // insert a records
+        let bob = Entity::from("Bob Marley", "person")
+            .unwrap()
+            .self_sponsored()
+            .tag(Tag::from("skill", "singing"))
+            .tag(Tag::from("group", "The Wailers"));
+        assert_eq!(ds.insert(&bob).is_ok(), true);
+        let alice = Entity::from("Alice", "person")
+            .unwrap()
+            .self_sponsored()
+            .tag(Tag::from("skill", "cards"))
+            .tag(Tag::from("address", "Wonderland"))
+            .tag(Tag::from("skill", "singing"));
+        assert_eq!(ds.insert(&alice).is_ok(), true);
+        // build index
+        ds.build_search_index();
+        // search for partial
+        let s = ds.search("car");
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].uid(), alice.uid());
+        // no hit
+        let s = ds.search("truck");
+        assert_eq!(s.len(), 0);
+        // fetch alice
+        let s = ds.search("Alice");
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].uid(), alice.uid());
+        // skill
+        let s = ds.search("singing");
+        assert_eq!(s.len(), 2);
     }
 
     // // TODO: remove

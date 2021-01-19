@@ -44,7 +44,7 @@ build-zip: build-dist
 test:
 	RUST_BACKTRACE=1 cargo test
 
-test-cov: test
+test-cov:
 	RUST_BACKTRACE=1 cargo tarpaulin -o Lcov
 
 lint: lint-all
