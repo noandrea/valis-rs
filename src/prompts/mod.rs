@@ -291,6 +291,20 @@ pub fn edit_entity(ds: &mut DataStore, mut target: Entity) -> Entity {
             target = target.add_relation(&rel);
         }
     }
+    // handles
+    while let Yes = confirm("add an handle?", Yes) {
+        let handles = vec![
+            ("Email", "email"),
+            ("Nickname", "nick"),
+            ("Website", "url"),
+            ("Telegram", "telegram"),
+            ("LinkedIn", "linkedin"),
+            ("Mobile", "mobile"),
+        ];
+        let prefix = select("what do you want to set", handles);
+        let label = input(&format!("what is the {} handle", prefix), Feat::NonEmpty);
+        target = target.with_handle(prefix, &label);
+    }
     //tags
     while let Yes = confirm("shall we add a tag?", No) {
         let tags = vec![
@@ -374,9 +388,10 @@ pub fn menu() -> Option<String> {
             ("Add a note", "note"),
             ("Show me the agenda", "agenda"),
             ("Let's go about today", "today"),
-            ("Update stuff", "update"),
-            ("Add something new", "add"),
-            ("What's to do", "hint"),
+            ("Inspect", "inspect"),
+            ("Update entries", "update"),
+            ("Add a new entry", "add"),
+            ("Suggest what to do", "hint"),
         ],
     ) {
         Some(x) => Some(x.to_string()),

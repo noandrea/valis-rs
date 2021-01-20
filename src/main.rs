@@ -40,36 +40,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .about("Sets a custom config file")
                 .takes_value(true),
         )
-        .subcommand(
-            App::new("add")
-                .about("add new thing")
-                .arg(
-                    Arg::new("EXP_STR")
-                        .about("write the expense string")
-                        .multiple(true)
-                        .value_terminator("."),
-                )
-                .arg(
-                    Arg::new("non_interactive")
-                        .long("yes")
-                        .short('y')
-                        .takes_value(false)
-                        .about("automatically reply yes"),
-                ),
-        )
-        .subcommand(App::new("today").about("print the today agenda"))
         .subcommand(App::new("export").about("export the database"))
         .subcommand(App::new("import").about("import the database"))
-        .subcommand(App::new("agenda").about("print th expenses summary"))
-        .subcommand(
-            App::new("search").about("search for a transaction").arg(
-                Arg::new("SEARCH_PATTERN")
-                    .about("pattern to match for tags and/or tx name")
-                    .required(true)
-                    .multiple(true)
-                    .value_terminator("."),
-            ),
-        )
         .get_matches();
 
     // first, see if there is the config dir
@@ -169,37 +141,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // command line
     match matches.subcommand() {
-        Some(("add", c)) => {
-            let entity = match c.values_of("EXP_STR") {
-                Some(values) => {
-                    let v = values.collect::<Vec<&str>>().join(" ");
-                    valis::Entity::from_str(&v).expect("Cannot parse the input string")
-                }
-                None => prompts::new_entity(),
-            }
-            .with_sponsor(&principal);
-            // check the values for
-            if c.is_present("non_interactive") {
-                ds.add(&entity)?;
-                return Ok(());
-            }
-            // print the transaction
-            println!("Name     : {}", entity.name());
-            // save to the store
-            match prompts::confirm("Do you want to add it?", Yes) {
-                Yes => match ds.add(&entity) {
-                    Ok(uid) => println!("added with uid {}", uid),
-                    Err(e) => println!("something went wrong {}", e),
-                },
-                No => println!("ok, another time"),
-            }
-        }
-        Some(("agenda", _)) => {
-            show_agenda(&ds);
-        }
-        Some(("update", _)) => {
-            update_entity(&mut ds, &principal);
-        }
         Some(("export", c)) => {
             let default_path = dirs
                 .data_dir()
@@ -218,6 +159,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "today" => edit_today(&mut ds, &principal),
                     "add" => add_entity(&mut ds, &principal),
                     "update" => update_entity(&mut ds, &principal),
+                    "inspect" => inspect(&ds),
                     "hint" => println!("Coming soon !"),
                     _ => {}
                 };
@@ -272,6 +214,40 @@ fn show_agenda(ds: &DataStore) {
 
     // separator
     p.render();
+}
+
+fn inspect(ds: &DataStore) {
+    while let Some(e) = prompts::search(ds, "who or what is the target?") {
+        println!("Name {}", e.name());
+        println!("{}", e.description);
+        println!("---------------------------------------------");
+        println!("Next action on {}:", utils::human_date(&e.next_action_date));
+        println!("{}", e.next_action_note);
+        println!("---------------------------------------------");
+        println!("Handles");
+        for (k, h) in e.handles.iter() {
+            println!("{:30}|{:30}", k, h);
+        }
+        println!("---------------------------------------------");
+        println!("Tags");
+        for t in e.get_tags() {
+            println!("{:30}", t);
+        }
+        println!("---------------------------------------------");
+        println!("Events");
+        for evt in ds.events(&e, false).iter() {
+            println!("recorded at {} from {}", evt.recorded_at, evt.kind);
+            println!("{:?}", evt.content);
+            println!(">>>>>>>>>>>>");
+            println!("Actors");
+            for a in evt.actors.iter() {
+                let (title, uid) = a.role();
+                let ac = ds.get_by_uid(&utils::id(&uid)).unwrap().unwrap();
+                println!("{:10} - {}", title, ac.name());
+            }
+        }
+        println!("---------------------------------------------");
+    }
 }
 
 fn update_entity(ds: &mut DataStore, _principal: &Entity) {

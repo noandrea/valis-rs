@@ -340,6 +340,15 @@ pub enum EventType {
     Action(String, String, usize),
 }
 
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Log(v) => write!(f, "log:{}", v),
+            Self::Action(src, title, s) => write!(f, "action:{}:{}:{}", src, title, s),
+        }
+    }
+}
+
 impl EventType {
     pub fn is_log(&self) -> bool {
         match self {
@@ -390,6 +399,16 @@ impl Actor {
             Self::Background(uid) => utils::id(uid),
             Self::RecordedBy(uid) => utils::id(uid),
             Self::Subject(uid) => utils::id(uid),
+        }
+    }
+
+    pub fn role(&self) -> (String, Uuid) {
+        match self {
+            Self::Lead(uid) => ("Lead".to_string(), *uid),
+            Self::Starring(uid) => ("Starring".to_string(), *uid),
+            Self::Background(uid) => ("Background".to_string(), *uid),
+            Self::RecordedBy(uid) => ("RecordedBy".to_string(), *uid),
+            Self::Subject(uid) => ("Subject".to_string(), *uid),
         }
     }
 }
