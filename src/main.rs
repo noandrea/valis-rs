@@ -1,7 +1,7 @@
 mod ledger;
 use ledger::{DataStore, ExportFormat};
 mod prompts;
-use prompts::{PolarAnswer::*, UserConfig};
+use prompts::{Feat::*, PolarAnswer::*, UserConfig};
 mod utils;
 
 use clap::{App, Arg};
@@ -12,7 +12,7 @@ use std::error;
 use std::fs;
 use std::path::Path;
 
-use ::valis::{Tag, TimeWindow};
+use ::valis::*;
 use chrono::NaiveDate;
 use Alignment::*;
 use Cell::*;
@@ -194,68 +194,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 No => println!("ok, another time"),
             }
         }
-        Some(("agenda", _c)) => {
-            let mut p = Printer::new(vec![30, 3, 3, 13, 80]);
-
-            let ranges = vec![
-                ("Past", TimeWindow::UpTo),
-                ("Today", TimeWindow::Day(1)),
-                ("Tomorrow", TimeWindow::Day(1)),
-                ("Within a week", TimeWindow::Day(6)),
-                ("Within 2 weeks", TimeWindow::Day(7)),
-                ("Within 4 weeks", TimeWindow::Day(14)),
-            ];
-
-            p.head(vec!["Name", "", "", "Next Date", "Message"]);
-            p.sep();
-
-            let mut target_date = utils::today();
-            for range in ranges {
-                let (label, r) = range;
-                let (since, until) = r.range(&target_date);
-                let items = ds.agenda(&since, &until, 0, 0);
-                if items.is_empty() {
-                    continue;
-                }
-                // print header
-                p.head(vec![&format!(" 📅 {} / {} entries", label, items.len())]);
-                p.sep();
-                // print stuff
-                items.iter().for_each(|e| {
-                    p.row(vec![
-                        Str(e.name.to_string()),
-                        Str(e.state.emoji()),
-                        Str(e.quality.emoji()),
-                        Date(e.next_action_date),
-                        Str(e.get_next_action_headline()),
-                    ])
-                });
-                target_date = until;
-                p.sep();
-            }
-
-            // separator
-            p.render();
+        Some(("agenda", _)) => {
+            show_agenda(&ds);
         }
-        Some(("search", c)) => {
-            let mut p = Printer::new(vec![40, 12, 8, 11, 11, 30, 40]);
-
-            if let Some(values) = c.values_of("SEARCH_PATTERN") {
-                let pattern = values.collect::<Vec<&str>>().join(" ");
-                // no results
-                let res = ds.search(&pattern);
-                if res.is_empty() {
-                    println!("No matches found ¯\\_(ツ)_/¯");
-                    return Ok(());
-                }
-                // with results
-                p.head(vec!["Item", "Price", "Diem", "Start", "End", "Tags", "%"]);
-                p.sep();
-                // data
-                // separator
-                p.sep();
-                p.render();
-            }
+        Some(("update", _)) => {
+            update_entity(&mut ds, &principal);
         }
         Some(("export", c)) => {
             let default_path = dirs
@@ -267,57 +210,125 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             ds.export(Path::new(export_path), ExportFormat::Json)?;
             println!("dataset exported in {}", export_path);
         }
-        Some(("today", c)) => {
-            println!("press Esc or q to quit");
-            let mut items = ds.agenda_until(&utils::today(), 0, 0);
-            while !items.is_empty() {
-                let target = match prompts::edit_entities(&items) {
-                    Some(t) => t,
-                    None => break,
-                };
-                // TODO
-                let x = prompts::edit_entity(target.clone());
-                ds.update(&x)?;
-                items = ds.agenda_until(&utils::today(), 0, 0);
-            }
-        }
         Some((&_, _)) | None => {
-            let today = utils::today();
-            let items = ds.agenda(&today, &today.succ(), 0, 0);
-            if items.is_empty() {
-                println!("Nothing for today");
-                return Ok(());
+            while let Some(action) = prompts::menu() {
+                match action.as_ref() {
+                    "note" => add_note(&mut ds, &principal, None),
+                    "agenda" => show_agenda(&ds),
+                    "today" => edit_today(&mut ds, &principal),
+                    "add" => add_entity(&mut ds, &principal),
+                    "update" => update_entity(&mut ds, &principal),
+                    "hint" => println!("Coming soon !"),
+                    _ => {}
+                };
             }
-
-            let mut p = Printer::new(vec![30, 3, 3, 3, 13, 80]);
-            // title
-            p.head(vec![
-                "Name",
-                "Status",
-                "Relationship",
-                "Events",
-                "Next Date",
-                "Message",
-            ]);
-            p.sep();
-            items.iter().for_each(|e| {
-                p.row(vec![
-                    Str(e.name.to_string()),
-                    Str(e.state.emoji()),
-                    Str(e.quality.emoji()),
-                    Cnt(311),
-                    Date(e.next_action_date),
-                    Str(e.get_next_action_headline()),
-                ])
-            });
-            // data
-            p.sep();
-            p.render();
         }
     }
 
     ds.close();
     Ok(())
+}
+
+fn show_agenda(ds: &DataStore) {
+    let mut p = Printer::new(vec![30, 3, 3, 4, 13, 80]);
+
+    let ranges = vec![
+        ("Past", TimeWindow::UpTo),
+        ("Today", TimeWindow::Day(1)),
+        ("Tomorrow", TimeWindow::Day(1)),
+        ("Within a week", TimeWindow::Day(6)),
+        ("Within 2 weeks", TimeWindow::Day(7)),
+        ("Within 4 weeks", TimeWindow::Day(14)),
+    ];
+
+    p.head(vec!["Name", "", "", "#Evt", "Next Date", "Message"]);
+    p.sep();
+
+    let mut target_date = utils::today();
+    for range in ranges {
+        let (label, r) = range;
+        let (since, until) = r.range(&target_date);
+        let items = ds.agenda(&since, &until, 0, 0);
+        if items.is_empty() {
+            continue;
+        }
+        // print header
+        p.head(vec![&format!(" 📅 {} / {} entries", label, items.len())]);
+        p.sep();
+        // print stuff
+        items.iter().for_each(|e| {
+            p.row(vec![
+                Str(e.name.to_string()),
+                Str(e.state.emoji()),
+                Str(e.quality.emoji()),
+                Cnt(ds.events(e, false).len()),
+                Date(e.next_action_date),
+                Str(e.get_next_action_headline()),
+            ])
+        });
+        target_date = until;
+        p.sep();
+    }
+
+    // separator
+    p.render();
+}
+
+fn update_entity(ds: &mut DataStore, _principal: &Entity) {
+    while let Some(e) = prompts::search(ds, "search what you want to update") {
+        prompts::edit_entity(ds, e);
+    }
+}
+
+fn add_entity(ds: &mut DataStore, principal: &Entity) {
+    let new = prompts::new_entity().with_sponsor(principal);
+    match prompts::confirm("Do you want to add it?", Yes) {
+        Yes => match ds.add(&new) {
+            Ok(uid) => println!("added with uid {}", uid),
+            Err(e) => println!("something went wrong {}", e),
+        },
+        No => println!("ok, another time"),
+    };
+}
+
+fn edit_today(ds: &mut DataStore, principal: &Entity) {
+    let mut items = ds.agenda_until(&utils::today(), 0, 0);
+    while !items.is_empty() {
+        let target = match prompts::edit_entities(&items) {
+            Some(t) => t,
+            None => break,
+        };
+        // ask if to add an event
+        if Yes == prompts::confirm("do you want to record a note?", No) {
+            add_note(ds, principal, Some(&target));
+        }
+        // TODO
+        let x = prompts::edit_entity(ds, target.clone());
+        ds.update(&x).ok();
+        items = ds.agenda_until(&utils::today(), 0, 0);
+    }
+}
+
+fn add_note(ds: &mut DataStore, author: &Entity, subject: Option<&Entity>) {
+    let mut evt = Event::action(
+        "cli",
+        "note",
+        1,
+        prompts::editor("type in your note"),
+        &[Actor::RecordedBy(author.uid)],
+    );
+
+    if let Some(s) = subject {
+        evt.actors.push(Actor::Subject(s.uid.clone()))
+    }
+
+    while Yes == prompts::confirm("add another actor", No) {
+        if let Some(e) = prompts::search(ds, "search:") {
+            let a = prompts::select_actor_role(&e);
+            evt.actors.push(a);
+        }
+    }
+    ds.record(&evt).unwrap();
 }
 
 #[derive(Debug)]
@@ -371,10 +382,7 @@ impl Printer {
                         match c {
                             Str(v) => v.pad(s, ' ', Left, true),
                             Cnt(v) => format!("{}", v).pad(s, ' ', Right, false),
-                            Date(v) => v
-                                .format("%a, %d.%m.%y")
-                                .to_string()
-                                .pad(s, ' ', Left, false),
+                            Date(v) => utils::human_date(v).pad(s, ' ', Left, false),
                             Sep => "".pad(s, self.row_sep, Alignment::Right, false),
                         }
                     })

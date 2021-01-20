@@ -136,7 +136,17 @@ impl DataStore {
         self.entities.iter().for_each(|r| {
             let (_, raw) = r.unwrap();
             let e: Entity = bincode::deserialize(&raw).unwrap();
-            let data = format!("{} {}", e.name(), e.get_tags().join(" "));
+
+            let data = format!(
+                "{} {} {}",
+                e.name(),
+                e.get_tags().join(" "),
+                e.handles
+                    .iter()
+                    .map(|(_, v)| v.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" ")
+            );
             self.index.insert(e.uid(), &data);
         });
     }
@@ -176,8 +186,9 @@ impl DataStore {
         if format == ExportFormat::NQuad {
             return Err(DataError::NotImplemented);
         }
+        // clean the database before starting
+        self.db.clear()?;
         let file = File::open(path)?;
-
         match format {
             ExportFormat::Json => BufReader::new(file).lines().for_each(|r| {
                 let line = r.unwrap();
@@ -211,7 +222,6 @@ impl DataStore {
             .scan_prefix(prefix)
             .map(|r| {
                 let (_k, v) = r.unwrap();
-                println!("{} / {} -> {}", prefix, str(&_k), str(&v));
                 let raw = self.events.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
             })
@@ -225,7 +235,7 @@ impl DataStore {
     /// <uid, Event>
     /// and for all the actors in the entity_event as
     /// <actor_uid:event_uid, event_uid>
-    fn record(&mut self, event: &Event) -> Result<valis::Uuid> {
+    pub fn record(&mut self, event: &Event) -> Result<valis::Uuid> {
         // consistency check
         if event.actors.is_empty() {
             return Err(DataError::GenericError("no actors for event".to_string()));
@@ -241,7 +251,7 @@ impl DataStore {
             let ak: &str = &format!(
                 "{}:{}:{}",
                 actor.uid(),
-                event.recorded_at.timestamp(),
+                i64::MAX - event.recorded_at.timestamp_millis(),
                 event.uid()
             );
             self.entity_event.insert(ak, k)?;
@@ -420,6 +430,9 @@ impl DataStore {
             let ik = format!("{}:{}", a, k);
             self.acl.insert(ik, k).expect("cannot insert acl");
         });
+        // TODO this is extremely expensive and should be changed
+        self.build_search_index();
+        // done
         Ok(entity.uid)
     }
 }
@@ -537,7 +550,13 @@ mod tests {
         let owner = Entity::from("bob", "person").unwrap().self_sponsored();
         // root object
         let root = Entity::from("acme", "org").unwrap().with_sponsor(&owner);
-        // insert
+        // init error
+        assert_eq!(
+            ds.init(&root).err().unwrap(),
+            DataError::InitializationError
+        );
+
+        // init ok
         ds.init(&owner).ok();
         ds.add(&root).ok();
         // now count events
@@ -577,6 +596,15 @@ mod tests {
         assert_eq!(a.len(), 2);
 
         ds.close();
+
+        // // TODO: db not closed
+        // // init error db not empty
+        // let mut ds = DataStore::open(d.path()).unwrap();
+        // // init error
+        // assert_eq!(
+        //     ds.init(&owner).err().unwrap(),
+        //     DataError::InitializationError
+        // );
     }
 
     #[test]
@@ -585,12 +613,15 @@ mod tests {
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
-        // insert bob
+        // bob
         let bob = Entity::from("bob", "person")
             .unwrap()
             .self_sponsored()
             .with_next_action(date(1, 1, 2000), "something".to_string());
 
+        // update not existing
+        assert_eq!(ds.update(&bob).err().unwrap(), DataError::NotFound);
+        // insert bob
         assert_eq!(ds.insert(&bob).is_ok(), true);
         // now update bob next action
         let bob = bob.with_next_action(date(11, 1, 2000), "something".to_string());
@@ -613,5 +644,43 @@ mod tests {
             .with_sponsor(&bob)
             .with_handle("email", "alice@acme.com");
         assert_eq!(ds.add(&martha).err().unwrap(), DataError::IDAlreadyTaken);
+    }
+
+    #[test]
+    fn test_events() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        println!("dir is {:?}", d);
+        // open the datastore
+        let mut ds = DataStore::open(d.path()).unwrap();
+        // bob
+        let bob = Entity::from("bob", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_next_action(date(1, 1, 2000), "something".to_string());
+        // insert bob
+        assert_eq!(ds.insert(&bob).is_ok(), true);
+
+        // insert 500 elements
+        let elements = 1000;
+        for i in 0..elements {
+            ds.record(&Event::action(
+                "count",
+                &format!("{}", i),
+                1,
+                None,
+                &[Actor::Lead(bob.uid.clone())],
+            ))
+            .unwrap();
+            // sleep 1ms
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let events = ds.events(&bob, false);
+        assert_eq!(events.len(), elements);
+        for (i, e) in events.iter().enumerate() {
+            assert_eq!(
+                e.kind,
+                EventType::Action("count".to_owned(), format!("{}", elements - 1 - i), 1)
+            );
+        }
     }
 }

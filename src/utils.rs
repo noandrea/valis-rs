@@ -90,6 +90,11 @@ pub fn prefix(xs: &str, ys: &str) -> String {
     xs[0..idx].to_string()
 }
 
+/// Pretty print a date 
+pub fn human_date(date: &NaiveDate) -> String {
+    date.format("%a, %d.%m.%y").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

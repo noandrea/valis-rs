@@ -355,19 +355,30 @@ impl EventType {
 /// The Starring are entities mentioned of an action
 /// The Background are entities object of te action
 ///
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Actor {
-    Lead(Uuid),
-    Starring(Uuid),
-    Background(Uuid),
+    RecordedBy(Uuid), // notes, meeting transcript, etc
+    Subject(Uuid),    // notes about something/someone
+    Lead(Uuid),       // meetings, events, etc
+    Starring(Uuid),   // entities attending
+    Background(Uuid), // context
 }
 
 impl Actor {
     pub fn from_str(input: &str) -> Result<Actor> {
         match utils::split_once(input, ':') {
-            Some(("lead", v)) => Ok(Actor::Lead(Uuid::from_str(v)?)),
-            Some(("star", v)) => Ok(Actor::Starring(Uuid::from_str(v)?)),
-            Some(("back", v)) => Ok(Actor::Background(Uuid::from_str(v)?)),
+            Some((p, v)) => Self::from(p, v),
+            _ => Err(ValisError::InputError("unrecognized".to_string())),
+        }
+    }
+
+    pub fn from(prefix: &str, uid: &str) -> Result<Actor> {
+        match prefix {
+            "auth" => Ok(Actor::RecordedBy(Uuid::from_str(uid)?)),
+            "lead" => Ok(Actor::Lead(Uuid::from_str(uid)?)),
+            "star" => Ok(Actor::Starring(Uuid::from_str(uid)?)),
+            "back" => Ok(Actor::Background(Uuid::from_str(uid)?)),
+            "subj" => Ok(Actor::Subject(Uuid::from_str(uid)?)),
             _ => Err(ValisError::InputError("unrecognized".to_string())),
         }
     }
@@ -377,15 +388,19 @@ impl Actor {
             Self::Lead(uid) => utils::id(uid),
             Self::Starring(uid) => utils::id(uid),
             Self::Background(uid) => utils::id(uid),
+            Self::RecordedBy(uid) => utils::id(uid),
+            Self::Subject(uid) => utils::id(uid),
         }
     }
 }
 impl fmt::Display for Actor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RecordedBy(uid) => write!(f, "author:{}", utils::id(uid)),
             Self::Lead(uid) => write!(f, "lead:{}", utils::id(uid)),
             Self::Starring(uid) => write!(f, "star:{}", utils::id(uid)),
             Self::Background(uid) => write!(f, "back:{}", utils::id(uid)),
+            Self::Subject(uid) => write!(f, "subj:{}", utils::id(uid)),
         }
     }
 }
@@ -484,6 +499,7 @@ impl RelQuality {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum RelType {
+    RelatedTo,                                  // generic link
     Role(String, NaiveDate, Option<NaiveDate>), // this is the main context
     BelongsTo(NaiveDate, NaiveDate),            // this a context root
     MemberOf(NaiveDate, NaiveDate),             // indicate the context of the thing
@@ -492,6 +508,7 @@ pub enum RelType {
 impl RelType {
     pub fn get_label(&self) -> String {
         match self {
+            Self::RelatedTo => "related_to".to_string(),
             Self::Role(l, _s, _u) => format!("rl:{}", l),
             Self::BelongsTo(_s, _u) => "bt".to_string(),
             Self::MemberOf(_s, _u) => "mo".to_string(),
@@ -502,7 +519,8 @@ impl RelType {
 impl fmt::Display for RelType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Role(l, s, u) => write!(f, "rl:{}:{:?}:{:?}", l, s, u),
+            Self::RelatedTo => write!(f, "related_to"),
+            Self::Role(l, s, u) => write!(f, ":{}:{:?}:{:?}", l, s, u),
             Self::BelongsTo(s, u) => write!(f, "bt:{:?}:{:?}", s, u),
             Self::MemberOf(s, u) => write!(f, "mo:{:?}:{:?}", s, u),
         }
@@ -513,6 +531,15 @@ impl fmt::Display for RelType {
 pub struct Rel {
     pub kind: RelType,
     pub target: Uuid,
+}
+
+impl Rel {
+    pub fn new(target: &Entity) -> Rel {
+        Rel {
+            target: target.uid,
+            kind: RelType::RelatedTo,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -531,9 +558,10 @@ pub struct Entity {
     pub sponsor: Uuid, // the uid of the sponsor for this thing that must be a person
     // service dates
     created_on: NaiveDate,
-    updated_on: NaiveDate,
+    pub updated_on: NaiveDate,
     // next action
-    pub next_action_date: NaiveDate, // in days
+    pub next_action_updated_on: NaiveDate, // last time it was updated
+    pub next_action_date: NaiveDate,       // in days
     pub next_action_note: String,
     // relationships
     pub relationships: Vec<Rel>,
@@ -614,36 +642,47 @@ impl Entity {
         y / n
     }
 
+    /// Update the updated_on field
+    fn touch(mut self) -> Self {
+        self.updated_on = utils::today();
+        self
+    }
+
+    /// Set the next action date and the note
+    ///
+    /// It does not change the updatd
     pub fn next_action(&mut self, date: NaiveDate, note: String) {
         self.next_action_date = date;
         self.next_action_note = note;
+        self.next_action_updated_on = utils::today();
     }
 
     pub fn with_next_action(mut self, date: NaiveDate, note: String) -> Self {
         self.next_action_date = date;
         self.next_action_note = note;
+        self.next_action_updated_on = utils::today();
         self
     }
 
     pub fn with_handle(mut self, label: &str, id: &str) -> Self {
         self.handles.insert(label.to_owned(), id.to_owned());
-        self
+        self.touch()
     }
 
     /// add a tag to an entity
     pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.insert(slugify(&tag.to_string_full()), tag);
-        self
+        self.touch()
     }
 
     pub fn with_sponsor(mut self, sponsor: &Entity) -> Self {
         self.sponsor = sponsor.uid.clone();
-        self
+        self.touch()
     }
 
     pub fn self_sponsored(mut self) -> Self {
         self.sponsor = self.uid.clone();
-        self
+        self.touch()
     }
 
     pub fn with_password(mut self, pass: Option<&String>) -> Self {
@@ -651,14 +690,20 @@ impl Entity {
             Some(p) => Some(utils::hash(p)),
             None => None,
         };
-        self
+        self.touch()
     }
 
-    pub fn change_quality(&mut self, new: RelQuality) {
+    pub fn change_quality(mut self, new: RelQuality) -> Self {
         if self.quality == new {
-            return;
+            return self;
         }
         self.quality = new;
+        self.touch()
+    }
+
+    pub fn add_relation(mut self, rel: &Rel) -> Self {
+        self.relationships.push(rel.to_owned());
+        self
     }
 
     pub fn authorized(&self, pwd: Option<&String>) -> Result<()> {
@@ -703,6 +748,7 @@ impl Entity {
         sponsor: uuid::Uuid,
         created_on: NaiveDate,
         updated_on: NaiveDate,
+        next_action_updated_on: NaiveDate,
         next_action_date: NaiveDate,
         next_action_note: &str,
         relationships: Vec<Rel>,
@@ -727,6 +773,7 @@ impl Entity {
             sponsor,
             created_on,
             updated_on,
+            next_action_updated_on,
             next_action_date,
             next_action_note: next_action_note.to_string(),
             relationships,
@@ -748,6 +795,7 @@ impl Entity {
             RelState::Active(utils::today(), None),
             RelQuality::Neutral(utils::today(), None),
             uid,
+            utils::today(),
             utils::today(),
             utils::today(),
             utils::today().succ(),
@@ -1036,5 +1084,34 @@ fn test_acl() {
         }
         assert_eq!(acl.unwrap(), *acl_exp);
         assert_eq!(acl_exp.to_string(), *label);
+    }
+}
+
+#[test]
+fn test_actor() {
+    let tests = vec![
+        (
+            "group:Management",
+            ACL::Limited(Tag::Group("Management".to_string())),
+            (Ok(()), "group:management"),
+        ),
+        ("public", ACL::Public, (Ok(()), "public")),
+        ("", ACL::Public, (Ok(()), "public")),
+        ("sponsor", ACL::Sponsor, (Ok(()), "sponsor")),
+        ("whatever", ACL::Public, (Err(()), "")),
+    ];
+
+    for (i, t) in tests.iter().enumerate() {
+        println!("test_actor#{}", i);
+        let (actor_in, actor_exp, actor_shapes) = t;
+        let (res, label) = actor_shapes;
+
+        let actor = ACL::from_str(actor_in);
+        assert_eq!(actor.is_err(), res.is_err());
+        if actor.is_err() {
+            return;
+        }
+        assert_eq!(actor.unwrap(), *actor_exp);
+        assert_eq!(actor_exp.to_string(), *label);
     }
 }
