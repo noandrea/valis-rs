@@ -1,5 +1,5 @@
 mod ledger;
-use ledger::{DataStore, ExportFormat};
+use ledger::{DataStore, EventFilter, ExportFormat};
 mod prompts;
 use prompts::{Feat::*, PolarAnswer::*, UserConfig};
 mod utils;
@@ -203,7 +203,7 @@ fn show_agenda(ds: &DataStore) {
                 Str(e.name.to_string()),
                 Str(e.state.emoji()),
                 Str(e.quality.emoji()),
-                Cnt(ds.events(e, false).len()),
+                Cnt(ds.events(e, EventFilter::Actions).len()),
                 Date(e.next_action_date),
                 Str(e.get_next_action_headline()),
             ])
@@ -217,7 +217,7 @@ fn show_agenda(ds: &DataStore) {
 }
 
 fn inspect(ds: &DataStore) {
-    while let Some(e) = prompts::search(ds, "who or what is the target?") {
+    while let Some(e) = prompts::search(ds, "search (or enter for cancel)") {
         println!("Name {}", e.name());
         println!("{}", e.description);
         println!("---------------------------------------------");
@@ -235,7 +235,7 @@ fn inspect(ds: &DataStore) {
         }
         println!("---------------------------------------------");
         println!("Events");
-        for evt in ds.events(&e, false).iter() {
+        for evt in ds.events(&e, EventFilter::Actions).iter() {
             println!("recorded at {} from {}", evt.recorded_at, evt.kind);
             println!("{:?}", evt.content);
             println!(">>>>>>>>>>>>");

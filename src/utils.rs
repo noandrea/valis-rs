@@ -19,8 +19,7 @@ pub fn today() -> NaiveDate {
     Local::today().naive_utc()
 }
 
-#[cfg(test)]
-pub fn after(days: i64) -> NaiveDate {
+pub fn today_plus(days: i64) -> NaiveDate {
     today() + Duration::days(days)
 }
 
@@ -90,7 +89,7 @@ pub fn prefix(xs: &str, ys: &str) -> String {
     xs[0..idx].to_string()
 }
 
-/// Pretty print a date 
+/// Pretty print a date
 pub fn human_date(date: &NaiveDate) -> String {
     date.format("%a, %d.%m.%y").to_string()
 }

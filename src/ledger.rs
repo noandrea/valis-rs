@@ -2,6 +2,10 @@ use ::valis::{self, Entity, Event, EventType, Tag};
 use chrono::NaiveDate;
 use rand::random;
 use simsearch::SimSearch;
+use sled::{
+    transaction::{TransactionError, TransactionResult},
+    Batch, Transactional,
+};
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
@@ -17,7 +21,7 @@ const TABLE_EDGES: &str = "EDGES";
 const TABLE_ACTIONS: &str = "ACTIONS";
 const TABLE_IDS: &str = "IDS";
 const TABLE_SYSTEM: &str = "SYSTEM";
-
+const TABLE_SPONSORSHIPS: &str = "SPONSORSHIPS";
 const TABLE_EVENTS: &str = "EVENTS";
 const TABLE_ENTITY_EVENT: &str = "ENTITY_EVENT";
 
@@ -26,12 +30,14 @@ type Result<T> = std::result::Result<T, DataError>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataError {
+    TxError,
     NotImplemented,
     InvalidSponsor,
     NotFound,
     GenericError(String),
     InitializationError,
     IDAlreadyTaken,
+    BrokenReference,
 }
 
 impl Error for DataError {}
@@ -60,6 +66,27 @@ pub enum ExportFormat {
     NQuad,
 }
 
+#[derive(PartialEq)]
+pub enum EventFilter {
+    Logs,
+    Actions,
+    LogsWithMessage(String),
+    ActionWithSource(String),
+    Any,
+}
+
+impl EventFilter {
+    pub fn matches(&self, evt: &Event) -> bool {
+        match self {
+            Self::Logs => evt.kind.is_log(),
+            Self::LogsWithMessage(m) => evt.kind.is_log() && (evt.kind.val() == *m),
+            Self::Actions => !evt.kind.is_log(),
+            Self::ActionWithSource(s) => !evt.kind.is_log() && (evt.kind.val() == *s),
+            _ => true,
+        }
+    }
+}
+
 fn action_key(e: &Entity) -> String {
     format!("{}:{}", e.next_action_date, e.uid())
 }
@@ -68,6 +95,9 @@ fn tag_key(t: &Tag, e: &Entity) -> String {
 }
 fn handle_key(p: &str, v: &str) -> String {
     utils::hash(&valis::slugify(format!("{}:{}", p, v)))
+}
+fn sponsor_key(e: &valis::Uuid, sponsor: &valis::Uuid) -> String {
+    format!("{}:{}", utils::id(sponsor), utils::id(e))
 }
 fn str(v: &sled::IVec) -> String {
     String::from_utf8_lossy(v).to_string()
@@ -86,6 +116,7 @@ pub struct DataStore {
     system: sled::Tree,
     events: sled::Tree,
     entity_event: sled::Tree,
+    sponsorships: sled::Tree,
     // search index
     index: SimSearch<String>,
 }
@@ -102,6 +133,7 @@ impl DataStore {
         let edges = db.open_tree(TABLE_EDGES)?;
         let acl = db.open_tree(TABLE_ACL)?;
         let system = db.open_tree(TABLE_SYSTEM)?;
+        let sponsorships = db.open_tree(TABLE_SPONSORSHIPS)?;
         // events
         let events = db.open_tree(TABLE_EVENTS)?;
         let entity_event = db.open_tree(TABLE_ENTITY_EVENT)?;
@@ -123,6 +155,7 @@ impl DataStore {
             system,
             events,
             entity_event,
+            sponsorships,
             index,
         };
         // build the search index
@@ -216,7 +249,17 @@ impl DataStore {
     /// Get a list of events for an entity
     ///
     /// Retrieve the list of events for a n entity
-    pub fn events(&self, subject: &Entity, include_logs: bool) -> Vec<Event> {
+    pub fn events(&self, subject: &Entity, filter: EventFilter) -> Vec<Event> {
+        self.events_within(subject, filter, None, None)
+    }
+
+    pub fn events_within(
+        &self,
+        subject: &Entity,
+        filter: EventFilter,
+        since: Option<NaiveDate>,
+        until: Option<NaiveDate>,
+    ) -> Vec<Event> {
         let prefix: &str = &subject.uid();
         self.entity_event
             .scan_prefix(prefix)
@@ -225,7 +268,7 @@ impl DataStore {
                 let raw = self.events.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
             })
-            .filter(|e: &Event| include_logs || !e.kind.is_log())
+            .filter(|e: &Event| filter.matches(e) && e.is_between(since, until))
             .collect()
     }
 
@@ -242,11 +285,13 @@ impl DataStore {
         }
         // serialize
         let k: &str = &event.uid();
-        let v = bincode::serialize(event).unwrap();
-        // insert the event
-        self.events.insert(k, v).expect("cannot record event");
-        // record the connection between event and entity
+        // prepare batch for entity_event
+        let mut ee_batch = sled::Batch::default();
         for actor in event.actors.iter() {
+            // consistency check
+            if !self.entities.contains_key(actor.uid())? {
+                return Err(DataError::BrokenReference);
+            }
             // now insert <actor_uid:event_uid, event_uid>
             let ak: &str = &format!(
                 "{}:{}:{}",
@@ -254,17 +299,31 @@ impl DataStore {
                 i64::MAX - event.recorded_at.timestamp_millis(),
                 event.uid()
             );
-            self.entity_event.insert(ak, k)?;
+            ee_batch.insert(ak, k);
         }
-        Ok(event.uid)
+
+        let (e, ee) = (&self.events, &self.entity_event);
+        // start a transaction
+        let r: TransactionResult<(), DataError> = (e, ee).transaction(|(events, entity_event)| {
+            let v = bincode::serialize(event).unwrap();
+            // insert the event
+            events.insert(k, v)?;
+            // record the connection between event and entity
+            entity_event.apply_batch(&ee_batch)?;
+            Ok(())
+        });
+        match r {
+            Ok(()) => Ok(event.uid),
+            Err(_) => Err(DataError::TxError),
+        }
     }
 
     /// Retrieve an entity by one of its ids
-    pub fn get_by_id(&self, id: &str) -> Result<Option<Entity>> {
-        match self.ids.get(id)? {
+    pub fn get_by_id(&self, prefix: &str, id: &str) -> Result<Option<Entity>> {
+        match self.ids.get(handle_key(prefix, id))? {
             Some(uid) => match self.entities.get(uid)? {
                 Some(v) => Ok(Some(bincode::deserialize(&v).unwrap())),
-                None => Ok(None),
+                None => Err(DataError::BrokenReference),
             },
             None => Ok(None),
         }
@@ -278,7 +337,7 @@ impl DataStore {
         }
     }
 
-    pub fn agenda_until(&self, until: &NaiveDate, limit: usize, offset: usize) -> Vec<Entity> {
+    pub fn agenda_until(&self, until: &NaiveDate, _limit: usize, _offset: usize) -> Vec<Entity> {
         self.actions
             .iter()
             .map(|r| {
@@ -368,6 +427,11 @@ impl DataStore {
                 if old.next_action_date != entity.next_action_date {
                     self.actions.remove(&action_key(&old))?;
                 }
+                // remove existing sponsor
+                if old.sponsor != entity.sponsor {
+                    let sk = sponsor_key(&entity.uid, &old.sponsor);
+                    self.sponsorships.remove(&sk)?;
+                }
                 // remove existing tags if exists
                 for (k, t) in old.tags.iter() {
                     if !entity.tags.contains_key(k) {
@@ -401,41 +465,118 @@ impl DataStore {
         let k: &str = &entity.uid();
         let v = bincode::serialize(entity).unwrap();
         // insert the data
-        self.entities.insert(k, v).expect("cannot insert entity");
+        self.entities.insert(k, v)?;
         // insert next action date
         let ak = action_key(entity);
-        self.actions.insert(ak, k).expect("cannot insert action");
+        self.actions.insert(ak, k)?;
         // insert ids
         // first insert the id itself
-        self.ids.insert(k, k).expect("cannot insert id");
-        // then insert the rest
-        entity.handles.iter().for_each(|(m, id)| {
+        self.ids.insert(k, k)?;
+        // insert sponsorships
+        let ik = sponsor_key(&entity.uid, &entity.sponsor);
+        self.sponsorships.insert(ik, k)?;
+        // insert handles
+        for (m, id) in entity.handles.iter() {
             let ik = handle_key(m, id);
-            self.ids.insert(ik, k).expect("cannot insert id");
-        });
+            self.ids.insert(ik, k)?;
+        }
         // insert tags
-        entity.tags.iter().for_each(|(_ts, t)| {
-            self.tags
-                .insert(tag_key(t, entity), k)
-                .expect("cannot insert tag");
-        });
+        for (_ts, t) in entity.tags.iter() {
+            self.tags.insert(tag_key(t, entity), k)?;
+        }
         // insert relations
-        entity.relationships.iter().for_each(|r| {
+        for r in entity.relationships.iter() {
             let ik = format!("{}:{}", entity.uid(), r.kind.get_label());
             let v: &str = &utils::id(&r.target);
-            self.edges.insert(ik, v).expect("cannot insert edge");
-        });
+            self.edges.insert(ik, v)?;
+        }
         // insert acl
-        entity.visibility.iter().for_each(|a| {
+        for a in entity.visibility.iter() {
             let ik = format!("{}:{}", a, k);
-            self.acl.insert(ik, k).expect("cannot insert acl");
-        });
+            self.acl.insert(ik, k)?;
+        }
         // TODO this is extremely expensive and should be changed
         self.build_search_index();
         // done
         Ok(entity.uid)
     }
+
+    pub fn sponsored_by(&self, sponsor: &Entity) -> Vec<Entity> {
+        self.sponsorships
+            .scan_prefix(&sponsor.uid())
+            .map(|r| {
+                let (_, v) = r.unwrap();
+                let raw = self.entities.get(&str(&v)).unwrap().unwrap();
+                let entity: Entity = bincode::deserialize(&raw).unwrap();
+                entity
+            })
+            .collect::<Vec<Entity>>()
+    }
+
+    /// There are three main rules for propose edits
+    ///
+    /// ### Rule #1 - an entity has been postponed too much (avoided)
+    ///
+    /// This happens when there are are more then 5 consecutive "postponed"
+    /// log events
+    ///
+    /// ### Rule #2 - an entity that has not been updated in a while
+    ///
+    /// This happens if an entity has not had a log "reviewed" in the last
+    /// 3m, or otherwise not been updated in the last 3m
+    ///
+    /// Rule #3 - an entity misses most of fields
+    ///
+    /// Every fields (except the name) have a weight, if the
+    /// weight is below threshold then the rules apply.
+    ///
+    /// An entity is reported only for a rule at a time
+    ///
+    pub fn propose_edits(&self, principal: &Entity) -> Vec<(EditType, Entity)> {
+        let mut to_edit: Vec<(EditType, Entity)> = Vec::new();
+
+        // this is how much an item can be postponed in a row
+        let avoidance_limit = 5;
+
+        'main: for e in self.sponsored_by(principal).iter() {
+            // Rule#1
+            let mut consequent_postponed_times = 0;
+            // get the last events
+            for evt in self.events(e, EventFilter::Logs).iter() {
+                if !EventFilter::LogsWithMessage("postponed".to_owned()).matches(evt) {
+                    break;
+                }
+                consequent_postponed_times += 1;
+                if consequent_postponed_times >= avoidance_limit {
+                    to_edit.push((EditType::Avoided, e.to_owned()));
+                    continue 'main;
+                }
+            }
+            // Rule#2
+            let last_update = match self
+                .events(e, EventFilter::LogsWithMessage("review".to_string()))
+                .first()
+            {
+                None => e.updated_on,
+                Some(evt) => evt.recorded_at.naive_local().date(),
+            };
+            if last_update < utils::today_plus(-180) {
+                to_edit.push((EditType::Avoided, e.to_owned()));
+                continue;
+            }
+            // Rule#3
+            // TODO
+        }
+        to_edit
+    }
 }
+
+pub enum EditType {
+    MaybeStale,
+    MaybeIncomplete,
+    Avoided,
+}
+
 #[cfg(test)]
 mod tests {
     use super::utils::*;
@@ -484,7 +625,7 @@ mod tests {
         ds.insert(&bob).unwrap();
         assert_eq!(ds.entities.len(), 1);
         // fetch it back
-        let bob_1 = ds.get_by_id(&bob.uid()).unwrap().unwrap();
+        let bob_1 = ds.get_by_uid(&bob.uid()).unwrap().unwrap();
         assert_eq!(bob_1.sponsor, bob.sponsor);
         let bob_1 = ds.get_by_uid(&bob.uid()).unwrap().unwrap();
         assert_eq!(bob_1.sponsor, bob.sponsor);
@@ -547,9 +688,15 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // owner
-        let owner = Entity::from("bob", "person").unwrap().self_sponsored();
+        let owner = Entity::from("bob", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_next_action(utils::date(3, 3, 2020), "whatever".to_string());
         // root object
-        let root = Entity::from("acme", "org").unwrap().with_sponsor(&owner);
+        let root = Entity::from("acme", "org")
+            .unwrap()
+            .with_sponsor(&owner)
+            .with_next_action(utils::date(3, 10, 2020), "whatever".to_string());
         // init error
         assert_eq!(
             ds.init(&root).err().unwrap(),
@@ -557,13 +704,13 @@ mod tests {
         );
 
         // init ok
-        ds.init(&owner).ok();
-        ds.add(&root).ok();
+        assert_eq!(ds.init(&owner).is_ok(), true);
+        assert_eq!(ds.add(&root).is_ok(), true);
         // now count events
 
-        let evts = ds.events(&owner, true);
-        assert_eq!(evts.len(), 1);
-        assert_eq!(evts[0].actors[0].uid(), owner.uid());
+        let events = ds.events(&owner, EventFilter::Any);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].actors[0].uid(), owner.uid());
 
         // insert data
         let data = vec![
@@ -578,7 +725,7 @@ mod tests {
             ds.insert(&e).unwrap();
         });
 
-        // test
+        // test agenda
         let (s, u) = TimeWindow::Day(1).range(&utils::date(1, 1, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 1);
@@ -589,11 +736,18 @@ mod tests {
 
         let (s, u) = TimeWindow::Year(1).range(&utils::date(1, 1, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
-        assert_eq!(a.len(), 6);
+        assert_eq!(a.len(), 4);
 
         let (s, u) = TimeWindow::Year(1).range(&utils::date(1, 2, 2021));
         let a = ds.agenda(&s, &u, 0, 0);
         assert_eq!(a.len(), 2);
+
+        // test agenda until
+        let a = ds.agenda_until(&utils::date(31, 10, 2020), 0, 0);
+        assert_eq!(a.len(), 2);
+
+        let a = ds.agenda_until(&utils::date(2, 2, 2021), 0, 0);
+        assert_eq!(a.len(), 6);
 
         ds.close();
 
@@ -647,6 +801,60 @@ mod tests {
     }
 
     #[test]
+    fn test_relationships() {
+        let d = tempdir::TempDir::new("valis").unwrap();
+        println!("dir is {:?}", d);
+        // open the datastore
+        let mut ds = DataStore::open(d.path()).unwrap();
+
+        for i in 0..100 {
+            let name = format!("e_{}", i);
+
+            let e = Entity::from(&name, "person")
+                .unwrap()
+                .self_sponsored()
+                .with_handle("code", &name)
+                .with_next_action(date(1, 1, 2000), "something".to_string());
+            assert_eq!(ds.insert(&e).is_ok(), true);
+        }
+        // create a new entity
+        let e = Entity::from("center", "person")
+            .unwrap()
+            .self_sponsored()
+            .with_handle("code", "center")
+            .with_next_action(date(1, 1, 2000), "something".to_string());
+        // add relationships
+        let e = e
+            .add_relation_with(
+                &ds.get_by_id("code", "e_1").unwrap().unwrap(),
+                RelType::RelatedTo,
+            )
+            .add_relation_with(
+                &ds.get_by_id("code", "e_10").unwrap().unwrap(),
+                RelType::RelatedTo,
+            )
+            .add_relation_with(
+                &ds.get_by_id("code", "e_50").unwrap().unwrap(),
+                RelType::RelatedTo,
+            );
+        // insert
+        assert_eq!(ds.insert(&e).is_ok(), true);
+        // fetch
+        let e = ds.get_by_id("code", "center").unwrap().unwrap();
+        assert_eq!(e.relationships.len(), 3);
+        // add a new one
+        let e = e.add_relation_with(
+            &ds.get_by_id("code", "e_71").unwrap().unwrap(),
+            RelType::RelatedTo,
+        );
+        // update
+        assert_eq!(ds.update(&e).is_ok(), true);
+        // fetch
+        let e = ds.get_by_id("code", "center").unwrap().unwrap();
+        assert_eq!(e.relationships.len(), 4);
+    }
+
+    #[test]
     fn test_events() {
         let d = tempdir::TempDir::new("valis").unwrap();
         println!("dir is {:?}", d);
@@ -659,8 +867,10 @@ mod tests {
             .with_next_action(date(1, 1, 2000), "something".to_string());
         // insert bob
         assert_eq!(ds.insert(&bob).is_ok(), true);
-
-        // insert 500 elements
+        // record an event without actors
+        let res = ds.record(&Event::new());
+        assert_eq!(res.err().unwrap(), DataError::BrokenReference);
+        // insert a bunch of events elements
         let elements = 1000;
         for i in 0..elements {
             ds.record(&Event::action(
@@ -674,7 +884,7 @@ mod tests {
             // sleep 1ms
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        let events = ds.events(&bob, false);
+        let events = ds.events(&bob, EventFilter::Actions);
         assert_eq!(events.len(), elements);
         for (i, e) in events.iter().enumerate() {
             assert_eq!(

@@ -356,6 +356,13 @@ impl EventType {
             _ => false,
         }
     }
+    /// this returns the first component for the log type data
+    pub fn val(&self) -> String {
+        match self {
+            Self::Log(m) => m.to_owned(),
+            Self::Action(src, _, _) => src.to_owned(),
+        }
+    }
 }
 
 /// The Actor is a participant of an event
@@ -478,6 +485,27 @@ impl Event {
 
     pub fn uid(&self) -> String {
         utils::id(&self.uid)
+    }
+
+    /// Check whenever the recorded date of an event is after of equals to a date
+    pub fn is_after_eq(&self, date: NaiveDate) -> bool {
+        self.recorded_at.naive_local() >= date.and_hms(0, 0, 0)
+    }
+
+    /// Check whenever the recorded date of an event is before a date
+    pub fn is_before(&self, date: NaiveDate) -> bool {
+        self.recorded_at.naive_local() < date.and_hms(0, 0, 0)
+    }
+
+    /// Check whenever the recorded date of an event is between two optional dates
+    pub fn is_between(&self, from: Option<NaiveDate>, until: Option<NaiveDate>) -> bool {
+        (match from {
+            Some(d) => self.is_after_eq(d),
+            _ => true,
+        }) && (match until {
+            Some(d) => self.is_before(d),
+            _ => true,
+        })
     }
 }
 
@@ -725,6 +753,14 @@ impl Entity {
         self
     }
 
+    pub fn add_relation_with(mut self, target: &Entity, kind: RelType) -> Self {
+        self.relationships.push(Rel {
+            target: target.uid.clone(),
+            kind,
+        });
+        self
+    }
+
     pub fn authorized(&self, pwd: Option<&String>) -> Result<()> {
         match &self.pass {
             Some(ph) => match pwd.is_some() && pwd.unwrap() == ph {
@@ -885,7 +921,7 @@ mod tests {
                     RelState::Active(today(), None), // state
                     today(),                         // created_on
                     today(),                         // updated_on
-                    after(1),                        // next_action_date
+                    today_plus(1),                   // next_action_date
                     "",                              // next_action_note
                     vec![],                          // events
                 ),
@@ -903,7 +939,7 @@ mod tests {
                     RelState::Active(today(), None), // state
                     today(),                         // created_on
                     today(),                         // updated_on
-                    after(1),                        // next_action_date
+                    today_plus(1),                   // next_action_date
                     "",                              // next_action_note
                     vec![Event::new()],              // events
                 ),
@@ -988,8 +1024,18 @@ mod tests {
     #[test]
     fn test_ranges() {
         let tests = vec![
-            (today(), TimeWindow::Day(1), (today(), after(1)), after(1)),
-            (today(), TimeWindow::Week(1), (today(), after(7)), after(7)),
+            (
+                today(),
+                TimeWindow::Day(1),
+                (today(), today_plus(1)),
+                today_plus(1),
+            ),
+            (
+                today(),
+                TimeWindow::Week(1),
+                (today(), today_plus(7)),
+                today_plus(7),
+            ),
             (
                 date(3, 1, 2000),
                 TimeWindow::Week(1),

@@ -286,7 +286,7 @@ pub fn edit_entity(ds: &mut DataStore, mut target: Entity) -> Entity {
     }
     // relationships
     while Yes == confirm("relationships?", No) {
-        if let Some(entity) = search(ds, "select target") {
+        if let Some(entity) = search(ds, "select target (enter to cancel)") {
             let rel = select_relationship(&entity);
             target = target.add_relation(&rel);
         }
@@ -352,9 +352,9 @@ pub fn select_actor_role(entity: &Entity) -> Actor {
 
 pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
     loop {
-        let pattern = input(q, NonEmpty);
+        let pattern = input(q, Empty);
         match pattern.as_str() {
-            "q" => {
+            "" => {
                 return None;
             }
             p => {
@@ -372,6 +372,7 @@ pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
 }
 
 pub fn select_relationship(target: &Entity) -> Rel {
+    // TODO: implement this interaction
     Rel::new(target)
 }
 
