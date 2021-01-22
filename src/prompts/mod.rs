@@ -144,10 +144,24 @@ pub fn root_entity() -> Entity {
     Entity::from(&name, class).unwrap()
 }
 
-pub fn new_entity() -> Entity {
+pub fn new_entity(ds: &DataStore) -> Option<Entity> {
     println!("let's add a new entity");
     // get the name
-    let name = input("how shall we call it?", NonEmpty);
+    let name = input("Name?", NonEmpty);
+    let existing = ds.search(&name);
+    if !existing.is_empty() {
+        let msg = format!(
+            "I've found similar entries:\n- {}\n add anyway?",
+            existing
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<String>>()
+                .join("\n- ")
+        );
+        if No == confirm(&msg, No) {
+            return None;
+        }
+    }
     // get the class
     let class = select(
         "how will describe that",
@@ -206,7 +220,7 @@ pub fn new_entity() -> Entity {
     };
 
     // return
-    e
+    Some(e)
 }
 
 pub fn edit_entities(items: &[Entity]) -> Option<&Entity> {

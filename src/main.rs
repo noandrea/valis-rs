@@ -257,7 +257,10 @@ fn update_entity(ds: &mut DataStore, _principal: &Entity) {
 }
 
 fn add_entity(ds: &mut DataStore, principal: &Entity) {
-    let new = prompts::new_entity().with_sponsor(principal);
+    let new = match prompts::new_entity(ds) {
+        Some(e) => e.with_sponsor(principal),
+        None => return,
+    };
     match prompts::confirm("Do you want to add it?", Yes) {
         Yes => match ds.add(&new) {
             Ok(uid) => println!("added with uid {}", uid),
