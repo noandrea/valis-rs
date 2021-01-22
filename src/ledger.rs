@@ -706,8 +706,9 @@ mod tests {
         // init ok
         assert_eq!(ds.init(&owner).is_ok(), true);
         assert_eq!(ds.add(&root).is_ok(), true);
-        // now count events
-
+        // check sponsorship (itself and the sponsored)
+        assert_eq!(ds.sponsored_by(&owner).len(), 2);
+        // count events
         let events = ds.events(&owner, EventFilter::Any);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].actors[0].uid(), owner.uid());
@@ -798,6 +799,15 @@ mod tests {
             .with_sponsor(&bob)
             .with_handle("email", "alice@acme.com");
         assert_eq!(ds.add(&martha).err().unwrap(), DataError::IDAlreadyTaken);
+        // change alice sponsor
+        let alice = ds
+            .get_by_id("email", "alice@acme.com")
+            .unwrap()
+            .unwrap()
+            .with_sponsor(&bob);
+        assert_eq!(ds.update(&alice).is_ok(), true);
+        // TODO handles
+        // TODO tags
     }
 
     #[test]

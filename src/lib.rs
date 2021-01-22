@@ -391,7 +391,7 @@ impl Actor {
     pub fn from(prefix: &str, uid: &str) -> Result<Actor> {
         match prefix {
             "auth" => Ok(Actor::RecordedBy(Uuid::from_str(uid)?)),
-            "lead" => Ok(Actor::Lead(Uuid::from_str(uid)?)),
+            "main" => Ok(Actor::Lead(Uuid::from_str(uid)?)),
             "star" => Ok(Actor::Starring(Uuid::from_str(uid)?)),
             "back" => Ok(Actor::Background(Uuid::from_str(uid)?)),
             "subj" => Ok(Actor::Subject(Uuid::from_str(uid)?)),
@@ -411,7 +411,7 @@ impl Actor {
 
     pub fn role(&self) -> (String, Uuid) {
         match self {
-            Self::Lead(uid) => ("Lead".to_string(), *uid),
+            Self::Lead(uid) => ("Main".to_string(), *uid),
             Self::Starring(uid) => ("Starring".to_string(), *uid),
             Self::Background(uid) => ("Background".to_string(), *uid),
             Self::RecordedBy(uid) => ("RecordedBy".to_string(), *uid),
@@ -423,7 +423,7 @@ impl fmt::Display for Actor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RecordedBy(uid) => write!(f, "author:{}", utils::id(uid)),
-            Self::Lead(uid) => write!(f, "lead:{}", utils::id(uid)),
+            Self::Lead(uid) => write!(f, "main:{}", utils::id(uid)),
             Self::Starring(uid) => write!(f, "star:{}", utils::id(uid)),
             Self::Background(uid) => write!(f, "back:{}", utils::id(uid)),
             Self::Subject(uid) => write!(f, "subj:{}", utils::id(uid)),
@@ -1032,6 +1032,12 @@ mod tests {
             ),
             (
                 today(),
+                TimeWindow::SingleDay,
+                (today(), today_plus(1)),
+                today_plus(1),
+            ),
+            (
+                today(),
                 TimeWindow::Week(1),
                 (today(), today_plus(7)),
                 today_plus(7),
@@ -1156,27 +1162,46 @@ fn test_acl() {
 fn test_actor() {
     let tests = vec![
         (
-            "group:Management",
-            ACL::Limited(Tag::Group("Management".to_string())),
-            (Ok(()), "group:management"),
+            "auth:a2199fbf-85de-42b0-a8e1-fb77241b6712",
+            Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
+            (
+                Ok(()),
+                (
+                    "RecordedBy".to_string(),
+                    Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
+                ),
+                "a2199fbf85de42b0a8e1fb77241b6712",
+                "author:a2199fbf85de42b0a8e1fb77241b6712",
+            ),
         ),
-        ("public", ACL::Public, (Ok(()), "public")),
-        ("", ACL::Public, (Ok(()), "public")),
-        ("sponsor", ACL::Sponsor, (Ok(()), "sponsor")),
-        ("whatever", ACL::Public, (Err(()), "")),
+        (
+            "whatever:a2199fbf-85de-42b0-a8e1-fb77241b6712",
+            Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
+            (
+                Err(()),
+                (
+                    "Starring".to_string(),
+                    Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
+                ),
+                "a2199fbf85de42b0a8e1fb77241b6712",
+                "star:a2199fbf85de42b0a8e1fb77241b6712",
+            ),
+        ),
     ];
 
     for (i, t) in tests.iter().enumerate() {
         println!("test_actor#{}", i);
         let (actor_in, actor_exp, actor_shapes) = t;
-        let (res, label) = actor_shapes;
+        let (res, role, uid, to_str) = actor_shapes;
 
-        let actor = ACL::from_str(actor_in);
+        let actor = Actor::from_str(actor_in);
         assert_eq!(actor.is_err(), res.is_err());
         if actor.is_err() {
             return;
         }
         assert_eq!(actor.unwrap(), *actor_exp);
-        assert_eq!(actor_exp.to_string(), *label);
+        assert_eq!(actor_exp.role(), *role);
+        assert_eq!(actor_exp.uid(), *uid);
+        assert_eq!(actor_exp.to_string(), *to_str);
     }
 }

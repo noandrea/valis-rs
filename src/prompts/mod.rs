@@ -386,12 +386,12 @@ pub fn menu() -> Option<String> {
     match select_opt(
         "hello there, what shall we do? esc/q to quit",
         vec![
-            ("Add a note", "note"),
-            ("Show me the agenda", "agenda"),
-            ("Let's go about today", "today"),
-            ("Inspect", "inspect"),
-            ("Update entries", "update"),
-            ("Add a new entry", "add"),
+            ("Quick note", "note"),
+            ("Agenda", "agenda"),
+            ("Dig up today", "today"),
+            ("Audit", "inspect"),
+            ("Update", "update"),
+            ("Add new", "add"),
             ("Suggest what to do", "hint"),
         ],
     ) {
