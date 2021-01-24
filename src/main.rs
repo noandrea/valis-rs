@@ -252,7 +252,8 @@ fn inspect(ds: &DataStore) {
 
 fn update_entity(ds: &mut DataStore, _principal: &Entity) {
     while let Some(e) = prompts::search(ds, "search what you want to update") {
-        prompts::edit_entity(ds, e);
+        let target = prompts::edit_entity(ds, &e);
+        ds.update(&target).unwrap();
     }
 }
 
@@ -281,9 +282,9 @@ fn edit_today(ds: &mut DataStore, principal: &Entity) {
         if Yes == prompts::confirm("do you want to record a note?", No) {
             add_note(ds, principal, Some(&target));
         }
-        // TODO
-        let x = prompts::edit_entity(ds, target.clone());
-        ds.update(&x).ok();
+        // TODO handle errors
+        let target = prompts::edit_entity(ds, target);
+        ds.update(&target).unwrap();
         items = ds.agenda_until(&utils::today(), 0, 0);
     }
 }
