@@ -52,7 +52,7 @@ pub fn confirm(q: &str, def: PolarAnswer) -> PolarAnswer {
         Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt(q)
             .default(def.to_bool())
-            .interact()
+            .interact_on(&Term::stdout())
             .unwrap(),
     )
 }
@@ -62,7 +62,7 @@ pub fn input(q: &str, empty: Feat) -> String {
     Input::with_theme(&ColorfulTheme::default())
         .with_prompt(q)
         .allow_empty(empty.to_bool())
-        .interact()
+        .interact_on(&Term::stdout())
         .unwrap()
 }
 
@@ -144,7 +144,7 @@ pub fn root_entity() -> Entity {
     Entity::from(&name, class).unwrap()
 }
 
-pub fn new_entity(ds: &DataStore) -> Option<Entity> {
+pub fn new_entity(ds: &DataStore, sponsor: &Entity) -> Option<Entity> {
     println!("let's add a new entity");
     // get the name
     let name = input("Name?", NonEmpty);
@@ -173,16 +173,20 @@ pub fn new_entity(ds: &DataStore) -> Option<Entity> {
         ],
     );
     // we have enough to create the entity
-    let mut e = Entity::from(&name, class).unwrap();
+    let mut e = Entity::from(&name, class).unwrap().with_sponsor(sponsor);
     // action
     let rtw = utils::random_timewindow(1, 12, Some('w'));
     let tw = select(
         &format!("when shall you be reminded about {}", name),
         vec![
+            ("Today", "0d"),
             ("Tomorrow", "1d"),
-            ("In 10 days", "10d"),
+            ("In 3 days", "3d"),
+            ("In a week", "1w"),
+            ("In two weeks", "2w"),
             ("In one month", "1m"),
             ("In three months", "3m"),
+            ("In six months", "6m"),
             ("Later", &rtw),
         ],
     );
@@ -199,7 +203,7 @@ pub fn new_entity(ds: &DataStore) -> Option<Entity> {
         e.next_action_date, name, e.next_action_note
     );
     // info
-    if let Yes = confirm("would you like to add some details?", Yes) {
+    if let Yes = confirm("would you like to add some details?", No) {
         if let Some(desc) = editor(&format!("write a note about {}", name)) {
             e.description = desc;
         }
@@ -243,7 +247,8 @@ pub fn edit_entities(items: &[Entity]) -> Option<&Entity> {
     }
 }
 
-pub fn edit_entity(ds: &mut DataStore, mut target: Entity) -> Entity {
+pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
+    let mut target = target.clone();
     // action
     let prompt = format!(
         "next action date is {}, do you want to change it?",
@@ -256,6 +261,7 @@ pub fn edit_entity(ds: &mut DataStore, mut target: Entity) -> Entity {
             vec![
                 ("Today", "0d"),
                 ("Tomorrow", "1d"),
+                ("In 3 days", "3d"),
                 ("In a week", "1w"),
                 ("In two weeks", "2w"),
                 ("In one month", "1m"),
@@ -314,6 +320,7 @@ pub fn edit_entity(ds: &mut DataStore, mut target: Entity) -> Entity {
             ("Telegram", "telegram"),
             ("LinkedIn", "linkedin"),
             ("Mobile", "mobile"),
+            ("Github", "github"),
         ];
         let prefix = select("what do you want to set", handles);
         let label = input(&format!("what is the {} handle", prefix), Feat::NonEmpty);
@@ -364,6 +371,7 @@ pub fn select_actor_role(entity: &Entity) -> Actor {
     Actor::from(&prefix, &entity.uid()).unwrap()
 }
 
+/// Search an entity in the datastore
 pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
     loop {
         let pattern = input(q, Empty);
@@ -375,6 +383,32 @@ pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
                 let res = ds.search(p);
                 if res.is_empty() {
                     continue;
+                }
+                match select_entity("please select one  (or esc/q to cancel):", &res) {
+                    Some(r) => return Some(r.clone()),
+                    None => continue,
+                }
+            }
+        }
+    }
+}
+
+/// Search an entity in the datastore or ask to create a new
+/// one if no result is found
+pub fn find_or_create(ds: &DataStore, q: &str, sponsor: &Entity) -> Option<Entity> {
+    loop {
+        let pattern = input(q, Empty);
+        match pattern.as_str() {
+            "" => {
+                return None;
+            }
+            p => {
+                let res = ds.search(p);
+                if res.is_empty() {
+                    if No == confirm("nothing found, add instead?", No) {
+                        continue;
+                    }
+                    return new_entity(ds, sponsor);
                 }
                 match select_entity("please select one  (or esc/q to cancel):", &res) {
                     Some(r) => return Some(r.clone()),

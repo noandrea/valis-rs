@@ -264,8 +264,8 @@ fn update_entity(ds: &mut DataStore, _principal: &Entity) {
 }
 
 fn add_entity(ds: &mut DataStore, principal: &Entity) {
-    let new = match prompts::new_entity(ds) {
-        Some(e) => e.with_sponsor(principal),
+    let new = match prompts::new_entity(ds, principal) {
+        Some(e) => e,
         None => return,
     };
     match prompts::confirm("Do you want to add it?", Yes) {
@@ -307,9 +307,8 @@ fn add_note(ds: &mut DataStore, author: &Entity, subject: Option<&Entity>) {
     if let Some(s) = subject {
         evt.actors.push(Actor::Subject(s.uid.clone()))
     }
-
     while Yes == prompts::confirm("add another actor", No) {
-        if let Some(e) = prompts::search(ds, "search:") {
+        if let Some(e) = prompts::find_or_create(ds, "search:", author) {
             let a = prompts::select_actor_role(&e);
             evt.actors.push(a);
         }
