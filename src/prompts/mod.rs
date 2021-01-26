@@ -1,6 +1,8 @@
-use super::ledger::DataStore;
-use super::utils;
-use ::valis::{Actor, Entity, Rel, RelQuality, Tag, TimeWindow};
+use ::valis::data::{
+    ledger::DataStore,
+    model::{Actor, Entity, Rel, RelQuality, Tag, TimeWindow},
+    utils,
+};
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input, Password, Select};
 use std::str::FromStr;

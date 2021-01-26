@@ -43,7 +43,7 @@ mod tests {
             uid: "a".to_owned(),
             pwd: Some("b".to_owned()),
         };
-        uc.save(&c);
+        assert_eq!(uc.save(&c).is_ok(), true);
 
         let uc2 = UserConfig::load(&c);
         assert_eq!(uc2.is_ok(), true);

@@ -1,8 +1,10 @@
-mod ledger;
-use ledger::{DataStore, EventFilter, ExportFormat};
+use ::valis::data::{
+    ledger::{DataStore, EventFilter, ExportFormat},
+    model::{Actor, Entity, Event, Tag, TimeWindow},
+    utils,
+};
 mod prompts;
-use prompts::{Feat::*, PolarAnswer::*, UserConfig};
-mod utils;
+use prompts::{PolarAnswer::*, UserConfig};
 
 use clap::{App, Arg};
 use directories::ProjectDirs;
@@ -12,7 +14,6 @@ use std::error;
 use std::fs;
 use std::path::Path;
 
-use ::valis::*;
 use chrono::NaiveDate;
 use Alignment::*;
 use Cell::*;

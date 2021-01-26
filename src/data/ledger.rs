@@ -1,11 +1,8 @@
-use ::valis::{self, Entity, Event, EventType, Tag};
+use super::model::{self, Entity, Event, Tag};
 use chrono::NaiveDate;
 use rand::random;
 use simsearch::SimSearch;
-use sled::{
-    transaction::{TransactionError, TransactionResult},
-    Batch, Transactional,
-};
+use sled::{transaction::TransactionResult, Batch, Transactional};
 use std::error::Error;
 use std::fmt;
 use std::fs::File;
@@ -94,9 +91,9 @@ fn tag_key(t: &Tag, e: &Entity) -> String {
     format!("{}:{}:{}", t.prefix(), t.slug(), e.uid())
 }
 fn handle_key(p: &str, v: &str) -> String {
-    utils::hash(&valis::slugify(format!("{}:{}", p, v)))
+    utils::hash(&utils::slugify(format!("{}:{}", p, v)))
 }
-fn sponsor_key(e: &valis::Uuid, sponsor: &valis::Uuid) -> String {
+fn sponsor_key(e: &model::Uuid, sponsor: &model::Uuid) -> String {
     format!("{}:{}", utils::id(sponsor), utils::id(e))
 }
 fn str(v: &sled::IVec) -> String {
@@ -278,7 +275,7 @@ impl DataStore {
     /// <uid, Event>
     /// and for all the actors in the entity_event as
     /// <actor_uid:event_uid, event_uid>
-    pub fn record(&mut self, event: &Event) -> Result<valis::Uuid> {
+    pub fn record(&mut self, event: &Event) -> Result<model::Uuid> {
         // consistency check
         if event.actors.is_empty() {
             return Err(DataError::GenericError("no actors for event".to_string()));
@@ -286,7 +283,7 @@ impl DataStore {
         // serialize
         let k: &str = &event.uid();
         // prepare batch for entity_event
-        let mut ee_batch = sled::Batch::default();
+        let mut ee_batch = Batch::default();
         for actor in event.actors.iter() {
             // consistency check
             if !self.entities.contains_key(actor.uid())? {
@@ -363,8 +360,6 @@ impl DataStore {
         self.actions
             .scan_prefix(prefix_str)
             .map(|r| {
-            // 
-            // 
                 let (_k, v) = r.unwrap();
                 let raw = self.entities.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
@@ -380,7 +375,7 @@ impl DataStore {
     ///
     /// It requires that the database is empty and checks that the
     /// sponsor and the user id are the same
-    pub fn init(&mut self, principal: &Entity) -> Result<valis::Uuid> {
+    pub fn init(&mut self, principal: &Entity) -> Result<model::Uuid> {
         if !self.is_empty() {
             return Err(DataError::InitializationError);
         }
@@ -395,7 +390,7 @@ impl DataStore {
     }
 
     /// Adds a new entity to the database
-    pub fn add(&mut self, entity: &Entity) -> Result<valis::Uuid> {
+    pub fn add(&mut self, entity: &Entity) -> Result<model::Uuid> {
         // search for the sponsor
         match self.get_by_uid(&entity.sponsor_uid())? {
             Some(sponsor) => {
@@ -421,7 +416,7 @@ impl DataStore {
         Ok(uid)
     }
 
-    pub fn update(&mut self, entity: &Entity) -> Result<valis::Uuid> {
+    pub fn update(&mut self, entity: &Entity) -> Result<model::Uuid> {
         // search for the sponsor
         match self.get_by_uid(&entity.uid())? {
             Some(old) => {
@@ -462,7 +457,7 @@ impl DataStore {
     }
 
     /// Insert a new entity and associated data
-    fn insert(&mut self, entity: &Entity) -> Result<valis::Uuid> {
+    fn insert(&mut self, entity: &Entity) -> Result<model::Uuid> {
         // insert data
         let k: &str = &entity.uid();
         let v = bincode::serialize(entity).unwrap();
@@ -600,9 +595,9 @@ pub enum EditType {
 
 #[cfg(test)]
 mod tests {
+    use super::model::*;
     use super::utils::*;
     use super::*;
-    use valis::*;
 
     #[test]
     fn test_import_export() {

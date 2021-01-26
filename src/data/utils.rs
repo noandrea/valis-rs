@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate};
 use rand::Rng;
+pub use slug::slugify;
 
 /// split  a string in two pieces
 pub fn split_once(s: &str, sep: char) -> Option<(&str, &str)> {
