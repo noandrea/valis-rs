@@ -604,7 +604,7 @@ pub struct Entity {
     pub quality: RelQuality,
     pub sponsor: Uuid, // the uid of the sponsor for this thing that must be a person
     // service dates
-    created_on: NaiveDate,
+    pub created_on: NaiveDate,
     pub updated_on: NaiveDate,
     // next action
     pub next_action_updated_on: NaiveDate, // last time it was updated

@@ -363,6 +363,8 @@ impl DataStore {
         self.actions
             .scan_prefix(prefix_str)
             .map(|r| {
+            // 
+            // 
                 let (_k, v) = r.unwrap();
                 let raw = self.entities.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
@@ -561,16 +563,35 @@ impl DataStore {
                 Some(evt) => evt.recorded_at.naive_local().date(),
             };
             if last_update < utils::today_plus(-180) {
-                to_edit.push((EditType::Avoided, e.to_owned()));
+                to_edit.push((EditType::MaybeStale, e.to_owned()));
                 continue;
             }
             // Rule#3
-            // TODO
+            let mut score = 10;
+            if e.description.is_empty() {
+                score -= 1;
+            }
+            if e.handles.is_empty() {
+                score -= 3;
+            }
+            if e.tags.is_empty() {
+                score -= 3;
+            }
+            if e.updated_on == e.created_on {
+                score -= 1;
+            }
+            if e.relationships.is_empty() {
+                score -= 2;
+            }
+            if score < 6 {
+                to_edit.push((EditType::MaybeIncomplete, e.to_owned()));
+            }
         }
         to_edit
     }
 }
 
+#[derive(Debug)]
 pub enum EditType {
     MaybeStale,
     MaybeIncomplete,

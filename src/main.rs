@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "add" => add_entity(&mut ds, &principal),
                     "update" => update_entity(&mut ds, &principal),
                     "inspect" => inspect(&ds),
-                    "hint" => println!("Coming soon !"),
+                    "hint" => hint(&ds, &principal),
                     _ => {}
                 };
             }
@@ -169,6 +169,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     ds.close();
     Ok(())
+}
+
+fn hint(ds: &DataStore, principal: &Entity) {
+    for (t, e) in ds.propose_edits(principal).iter() {
+        println!("{:?} - {}", t, e);
+    }
 }
 
 fn show_agenda(ds: &DataStore) {
