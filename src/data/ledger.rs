@@ -187,10 +187,17 @@ impl DataStore {
         entities.len() == 0
     }
 
+    /// Flush and close the datastore
+    ///
+    /// be aware that the underling files may
+    /// take a moment to actually close the file
     pub fn close(&self) {
         self.db.flush().unwrap();
+        drop(&self.db);
     }
 
+    /// Export the dataset in the format expressed by the format parameter
+    ///
     pub fn export(&self, path: &Path, format: ExportFormat) -> Result<()> {
         let mut file = LineWriter::new(File::create(path)?);
 
@@ -212,6 +219,7 @@ impl DataStore {
         Ok(())
     }
 
+    /// Import the dataset from an export
     pub fn import(&mut self, path: &Path, format: ExportFormat) -> Result<()> {
         if format == ExportFormat::NQuad {
             return Err(DataError::NotImplemented);
@@ -230,6 +238,24 @@ impl DataStore {
         Ok(())
     }
 
+    /// Set a metadata value
+    pub fn set_meta(&mut self, key: &str, val: &str) -> Result<()> {
+        let k = format!("meta:{}", key);
+        self.system.insert(&k, val)?;
+        Ok(())
+    }
+
+    /// Get a metadata value
+    pub fn get_meta(&mut self, key: &str) -> Option<String> {
+        let k = format!("meta:{}", key);
+        if let Ok(v) = self.system.get(&k) {
+            if let Some(v) = v {
+                return Some(str(&v));
+            }
+        }
+        None
+    }
+
     /// Perform a search for a string in tags and transaction name
     ///
     pub fn search(&self, pattern: &str) -> Vec<Entity> {
@@ -243,13 +269,16 @@ impl DataStore {
             .collect::<Vec<Entity>>()
     }
 
-    /// Get a list of events for an entity
+    /// Get a list of events for an entity sorted
+    /// by date descending (latest first).
     ///
-    /// Retrieve the list of events for a n entity
+    /// Retrieve the list of events for an entity
     pub fn events(&self, subject: &Entity, filter: EventFilter) -> Vec<Event> {
         self.events_within(subject, filter, None, None)
     }
 
+    /// Get a list of events for an entity sorted by date
+    /// descending (latest first) between two dates
     pub fn events_within(
         &self,
         subject: &Entity,
@@ -636,6 +665,8 @@ mod tests {
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
+        // reopen should not be possible
+        assert_eq!(DataStore::open(d.path()).is_err(), true);
         // insert a records
         let bob = Entity::from("bob", "person").unwrap();
         ds.insert(&bob).unwrap();
