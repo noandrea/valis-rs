@@ -6,11 +6,16 @@ use std::path::Path;
 pub struct UserConfig {
     pub uid: String,
     pub pwd: Option<String>,
+    pub ctx: String,
 }
 
 impl UserConfig {
-    pub fn new(uid: String) -> UserConfig {
-        UserConfig { uid, pwd: None }
+    pub fn new(uid: String, ctx: String) -> UserConfig {
+        UserConfig {
+            uid,
+            pwd: None,
+            ctx,
+        }
     }
 
     pub fn load(path: &Path) -> Result<Option<UserConfig>, std::io::Error> {
@@ -42,11 +47,18 @@ mod tests {
         let uc = UserConfig {
             uid: "a".to_owned(),
             pwd: Some("b".to_owned()),
+            ctx: "default".to_owned(),
         };
         assert_eq!(uc.save(&c).is_ok(), true);
 
         let uc2 = UserConfig::load(&c);
         assert_eq!(uc2.is_ok(), true);
         assert_eq!(uc, uc2.unwrap().unwrap());
+
+        //
+        let uc = UserConfig::new("xxx".to_owned(), "default".to_owned());
+        assert_eq!(uc.ctx, "default".to_owned());
+        assert_eq!(uc.pwd, None);
+        assert_eq!(uc.uid, "xxx");
     }
 }

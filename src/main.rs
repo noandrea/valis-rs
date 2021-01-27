@@ -1,4 +1,5 @@
 use ::valis::data::{
+    context::ContextManager,
     ledger::{DataStore, EventFilter, ExportFormat},
     model::{Actor, Entity, Event, Tag, TimeWindow},
     utils,
@@ -22,7 +23,6 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "farcast";
 const APPLICATION: &str = "valis";
-const DB_FOLDER: &str = "data";
 const CFG_USER: &str = "user.toml";
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -62,27 +62,27 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             }
         }
     }
-    // Load the datastore
-    let db_path = dirs.data_dir().join(Path::new(DB_FOLDER));
-    let mut ds = DataStore::open(db_path.as_path())?;
+    // Open the context
+    let mut ctxm = ContextManager::new(dirs.data_dir())?;
+    //let mut ds = DataStore::open(db_path.as_path())?;
+    // TODO: import
     // import command first of all
-    if let Some(("import", c)) = matches.subcommand() {
-        let default_path = dirs
-            .data_dir()
-            .join("export.json")
-            .to_string_lossy()
-            .to_string();
-        let export_path = c.value_of("path").unwrap_or(&default_path);
-        ds.import(Path::new(export_path), ExportFormat::Json)?;
-        println!("dataset imported from {}", export_path);
-        return Ok(());
-    }
+    // if let Some(("import", c)) = matches.subcommand() {
+    //     let default_path = dirs
+    //         .data_dir()
+    //         .join("export.json")
+    //         .to_string_lossy()
+    //         .to_string();
+    //     let export_path = c.value_of("path").unwrap_or(&default_path);
+    //     ds.import(Path::new(export_path), ExportFormat::Json)?;
+    //     println!("dataset imported from {}", export_path);
+    //     return Ok(());
+    // }
 
     // this is instead the config path
     let cfg_path = dirs.preference_dir().join(CFG_USER);
-    // fist check if the datastore has content
-    // if the datastore is empty then setup
-    if ds.is_empty() {
+    // if the context manager is empty then setup
+    if ctxm.is_empty() {
         // if no exit
         if let No = prompts::confirm("VALIS is not configured yet, shall we do it?", Yes) {
             println!("alright, we'll think about it later");
@@ -90,19 +90,13 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
         println!("let's start with a few questions");
         // first create the owner itself
-        let principal = prompts::principal_entity()
-            .self_sponsored()
-            .tag(Tag::System("owner".to_owned()))
-            .tag(Tag::System("admin".to_owned()));
+        let principal = prompts::principal_entity();
         // ask about the root entity
-        let root = prompts::root_entity()
-            .with_sponsor(&principal)
-            .tag(Tag::System("root".to_owned()));
-
-        ds.init(&principal)?;
-        ds.add(&root)?;
+        let root = prompts::root_entity();
+        // add the context to the database
+        let context_name = ctxm.new_datastore(&principal, &root)?;
         // now create a new user config and store it
-        let cfg = UserConfig::new(principal.uid());
+        let cfg = UserConfig::new(principal.uid(), context_name);
         cfg.save(&cfg_path)?;
     }
 
@@ -114,6 +108,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             &cfg_path
         ),
     };
+    // open the datastore
+    let mut ds = ctxm.open_datastore(&cfg.ctx)?;
+
     // load the current user
     let principal = match ds.get_by_uid(&cfg.uid)? {
         Some(u) => u,
@@ -162,6 +159,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "update" => update_entity(&mut ds, &principal),
                     "inspect" => inspect(&ds),
                     "hint" => hint(&ds, &principal),
+                    "change_context" => {
+                        //TODO next in the pipeline
+                    }
                     _ => {}
                 };
             }

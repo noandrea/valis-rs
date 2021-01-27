@@ -443,6 +443,7 @@ pub fn menu() -> Option<String> {
             ("Update", "update"),
             ("Add new", "add"),
             ("Suggest what to do", "hint"),
+            ("Change context", "change_context"),
         ],
     ) {
         Some(x) => Some(x.to_string()),
