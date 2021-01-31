@@ -84,11 +84,9 @@ impl TimeWindow {
                 // match nm (number of months) and calculate the end year / month
                 let (y, m) = (since.year() as u32 + nm / 12, nm % 12);
                 // calculate the end date
-                let duration = NaiveDate::from_ymd(y as i32, m, 1)
-                    .signed_duration_since(*since)
-                    .num_days()
-                    - 1;
-                duration + since.day() as i64
+                let end_month = NaiveDate::from_ymd(y as i32, m, 1);
+                let ym = end_month.signed_duration_since(*since).num_days() - 1;
+                ym + since.day() as i64
             }
             Self::Year(amount) => {
                 let ny = since.year() + *amount as i32;
@@ -1032,30 +1030,45 @@ mod tests {
     #[test]
     fn test_ranges() {
         let tests = vec![
-            (today(), "1d", (today(), today_plus(1)), today_plus(1)),
-            (today(), "1d", (today(), today_plus(1)), today_plus(1)),
-            (today(), "1w", (today(), today_plus(7)), today_plus(7)),
+            (
+                today(),
+                TimeWindow::SingleDay,
+                (today(), today_plus(1)),
+                today_plus(1),
+            ),
+            (
+                today(),
+                TimeWindow::Day(1),
+                (today(), today_plus(1)),
+                today_plus(1),
+            ),
+            (
+                today(),
+                TimeWindow::Week(1),
+                (today(), today_plus(7)),
+                today_plus(7),
+            ),
             (
                 date(3, 1, 2000),
-                "1w",
+                TimeWindow::Week(1),
                 (date(3, 1, 2000), date(10, 1, 2000)),
                 date(10, 1, 2000),
             ),
             (
                 date(1, 1, 2000),
-                "1m",
+                TimeWindow::Month(1),
                 (date(1, 1, 2000), date(1, 2, 2000)),
                 date(1, 2, 2000),
             ),
             (
                 date(31, 1, 2020),
-                "1m",
+                TimeWindow::Month(1),
                 (date(31, 1, 2020), date(2, 3, 2020)),
                 date(2, 3, 2020),
             ),
             (
                 date(1, 1, 2000),
-                "10y",
+                TimeWindow::Year(10),
                 (date(1, 1, 2000), date(1, 1, 2010)),
                 date(1, 1, 2010),
             ),
@@ -1064,8 +1077,7 @@ mod tests {
         for (i, t) in tests.iter().enumerate() {
             println!("test_ranges#{}", i);
 
-            let (window_from, window_exp_str, range_exp, offset_exp) = t;
-            let window_exp = TimeWindow::from_str(window_exp_str).unwrap();
+            let (window_from, window_exp, range_exp, offset_exp) = t;
             println!(
                 "{} - {}:{} -> {}",
                 window_from.format("%A %d.%m"),

@@ -1,7 +1,7 @@
 use ::valis::data::{
-    context::ContextManager,
+    context::{ContextManager, CtxError},
     ledger::{DataStore, EventFilter, ExportFormat},
-    model::{Actor, Entity, Event, Tag, TimeWindow},
+    model::{Actor, Entity, Event, TimeWindow},
     utils,
 };
 mod prompts;
@@ -136,6 +136,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     println!("Welcome back {}", principal);
+    println!("you are using the {} context", cfg.ctx);
 
     // command line
     match matches.subcommand() {
@@ -160,7 +161,21 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "inspect" => inspect(&ds),
                     "hint" => hint(&ds, &principal),
                     "change_context" => {
-                        //TODO next in the pipeline
+                        // ask for the name
+                        cfg.ctx = prompts::select_context(&ctxm);
+                        cfg.save(&cfg_path)?;
+                        // close current datastore
+                        ds.close();
+                        ds = ctxm.open_datastore(&cfg.ctx)?;
+                        println!("switched to {} context", cfg.ctx);
+                    }
+                    "new_context" => {
+                        cfg.ctx = new_context(&mut ctxm, &principal)?;
+                        cfg.save(&cfg_path)?;
+                        // close current and open the new one
+                        ds.close();
+                        ds = ctxm.open_datastore(&cfg.ctx)?;
+                        println!("switched to {} context", cfg.ctx);
                     }
                     _ => {}
                 };
@@ -170,6 +185,14 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     ds.close();
     Ok(())
+}
+
+// Create a new context
+fn new_context(ctxm: &mut ContextManager, principal: &Entity) -> Result<String, CtxError> {
+    // ask about the root entity
+    let root = prompts::root_entity();
+    // add the context to the database
+    ctxm.new_datastore(&principal, &root)
 }
 
 fn hint(ds: &DataStore, principal: &Entity) {

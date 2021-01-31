@@ -1,4 +1,5 @@
 use ::valis::data::{
+    context::ContextManager,
     ledger::DataStore,
     model::{Actor, Entity, Rel, RelQuality, Tag, TimeWindow},
     utils,
@@ -263,6 +264,7 @@ pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
             vec![
                 ("Today", "0d"),
                 ("Tomorrow", "1d"),
+                ("In 2 days", "2d"),
                 ("In 3 days", "3d"),
                 ("In a week", "1w"),
                 ("In two weeks", "2w"),
@@ -431,6 +433,18 @@ pub fn select_entity<'a>(q: &'a str, entities: &'a [Entity]) -> Option<&'a Entit
     select_opt(q, opts)
 }
 
+pub fn select_context(context_manager: &ContextManager) -> String {
+    select(
+        "Which one?",
+        context_manager
+            .list()
+            .iter()
+            .map(|(k, _)| (&k[..], k))
+            .collect(),
+    )
+    .to_owned()
+}
+
 pub fn menu() -> Option<String> {
     // ask for the quality
     match select_opt(
@@ -444,6 +458,7 @@ pub fn menu() -> Option<String> {
             ("Add new", "add"),
             ("Suggest what to do", "hint"),
             ("Change context", "change_context"),
+            ("New context", "new_context"),
         ],
     ) {
         Some(x) => Some(x.to_string()),
