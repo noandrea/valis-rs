@@ -83,18 +83,18 @@ impl TimeWindow {
                 let nm = since.month() + amount;
                 // match nm (number of months) and calculate the end year / month
                 let (y, m) = (since.year() as u32 + nm / 12, nm % 12);
-                // wrap the result with the correct type
-                let (y, m, d) = (y as i32, m, since.day());
                 // calculate the end date
-                let end = NaiveDate::from_ymd(y, m, d);
-                // count the days
-                end.signed_duration_since(*since).num_days()
+                let duration = NaiveDate::from_ymd(y as i32, m, 1)
+                    .signed_duration_since(*since)
+                    .num_days()
+                    - 1;
+                duration + since.day() as i64
             }
             Self::Year(amount) => {
                 let ny = since.year() + *amount as i32;
-                let end = NaiveDate::from_ymd(ny, since.month(), since.day());
+                let end = NaiveDate::from_ymd(ny, since.month(), 1);
                 // count the days
-                end.signed_duration_since(*since).num_days()
+                end.signed_duration_since(*since).num_days() - 1 + since.day() as i64
             }
             Self::Week(amount) => amount * 7,
             Self::Day(amount) => *amount,
@@ -1032,36 +1032,40 @@ mod tests {
     #[test]
     fn test_ranges() {
         let tests = vec![
-            (
-                today(),
-                TimeWindow::Day(1),
-                (today(), today_plus(1)),
-                today_plus(1),
-            ),
-            (
-                today(),
-                TimeWindow::SingleDay,
-                (today(), today_plus(1)),
-                today_plus(1),
-            ),
-            (
-                today(),
-                TimeWindow::Week(1),
-                (today(), today_plus(7)),
-                today_plus(7),
-            ),
+            (today(), "1d", (today(), today_plus(1)), today_plus(1)),
+            (today(), "1d", (today(), today_plus(1)), today_plus(1)),
+            (today(), "1w", (today(), today_plus(7)), today_plus(7)),
             (
                 date(3, 1, 2000),
-                TimeWindow::Week(1),
+                "1w",
                 (date(3, 1, 2000), date(10, 1, 2000)),
                 date(10, 1, 2000),
+            ),
+            (
+                date(1, 1, 2000),
+                "1m",
+                (date(1, 1, 2000), date(1, 2, 2000)),
+                date(1, 2, 2000),
+            ),
+            (
+                date(31, 1, 2020),
+                "1m",
+                (date(31, 1, 2020), date(2, 3, 2020)),
+                date(2, 3, 2020),
+            ),
+            (
+                date(1, 1, 2000),
+                "10y",
+                (date(1, 1, 2000), date(1, 1, 2010)),
+                date(1, 1, 2010),
             ),
         ];
 
         for (i, t) in tests.iter().enumerate() {
             println!("test_ranges#{}", i);
 
-            let (window_from, window_exp, range_exp, offset_exp) = t;
+            let (window_from, window_exp_str, range_exp, offset_exp) = t;
+            let window_exp = TimeWindow::from_str(window_exp_str).unwrap();
             println!(
                 "{} - {}:{} -> {}",
                 window_from.format("%A %d.%m"),
