@@ -399,7 +399,10 @@ pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
 
 /// Search an entity in the datastore or ask to create a new
 /// one if no result is found
-pub fn find_or_create(ds: &DataStore, q: &str, sponsor: &Entity) -> Option<Entity> {
+///
+/// Will return an Option<(Entity, bool)> where the bool indicates
+/// if the entity returned is new (has been created)
+pub fn find_or_create(ds: &DataStore, q: &str, sponsor: &Entity) -> Option<(Entity, bool)> {
     loop {
         let pattern = input(q, Empty);
         match pattern.as_str() {
@@ -412,10 +415,10 @@ pub fn find_or_create(ds: &DataStore, q: &str, sponsor: &Entity) -> Option<Entit
                     if No == confirm("nothing found, add instead?", No) {
                         continue;
                     }
-                    return new_entity(ds, sponsor);
+                    return Some((new_entity(ds, sponsor).unwrap(), true));
                 }
                 match select_entity("please select one  (or esc/q to cancel):", &res) {
-                    Some(r) => return Some(r.clone()),
+                    Some(r) => return Some((r.clone(), false)),
                     None => continue,
                 }
             }

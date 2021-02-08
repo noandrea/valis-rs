@@ -1,6 +1,6 @@
 use ::valis::data::{
     context::{ContextManager, CtxError},
-    ledger::{DataStore, EventFilter, ExportFormat},
+    ledger::{DataError, DataStore, EventFilter, ExportFormat},
     model::{Actor, Entity, Event, TimeWindow},
     utils,
 };
@@ -152,7 +152,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
         Some((&_, _)) | None => {
             while let Some(action) = prompts::menu() {
-                match action.as_ref() {
+                let out = match action.as_ref() {
                     "note" => add_note(&mut ds, &principal, None),
                     "agenda" => show_agenda(&ds),
                     "today" => edit_today(&mut ds, &principal),
@@ -168,6 +168,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         ds.close();
                         ds = ctxm.open_datastore(&cfg.ctx)?;
                         println!("switched to {} context", cfg.ctx);
+                        Ok(())
                     }
                     "new_context" => {
                         cfg.ctx = new_context(&mut ctxm, &principal)?;
@@ -176,9 +177,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         ds.close();
                         ds = ctxm.open_datastore(&cfg.ctx)?;
                         println!("switched to {} context", cfg.ctx);
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                };
+                match out {
+                    Err(e) => {
+                        println!("ouch, something went wrong: {}", e)
                     }
                     _ => {}
-                };
+                }
             }
         }
     }
@@ -195,13 +203,14 @@ fn new_context(ctxm: &mut ContextManager, principal: &Entity) -> Result<String, 
     ctxm.new_datastore(&principal, &root)
 }
 
-fn hint(ds: &DataStore, principal: &Entity) {
+fn hint(ds: &DataStore, principal: &Entity) -> Result<(), DataError> {
     for (t, e) in ds.propose_edits(principal).iter() {
         println!("{:?} - {}", t, e);
     }
+    Ok(())
 }
 
-fn show_agenda(ds: &DataStore) {
+fn show_agenda(ds: &DataStore) -> Result<(), DataError> {
     let mut p = Printer::new(vec![30, 3, 3, 4, 13, 80]);
 
     let ranges = vec![
@@ -244,9 +253,10 @@ fn show_agenda(ds: &DataStore) {
 
     // separator
     p.render();
+    Ok(())
 }
 
-fn inspect(ds: &DataStore) {
+fn inspect(ds: &DataStore) -> Result<(), DataError> {
     while let Some(e) = prompts::search(ds, "search (or enter for cancel)") {
         println!("Name {}", e.name());
         println!("{}", e.description);
@@ -278,19 +288,21 @@ fn inspect(ds: &DataStore) {
         }
         println!("---------------------------------------------");
     }
+    Ok(())
 }
 
-fn update_entity(ds: &mut DataStore, _principal: &Entity) {
+fn update_entity(ds: &mut DataStore, _principal: &Entity) -> Result<(), DataError> {
     while let Some(e) = prompts::search(ds, "search what you want to update") {
         let target = prompts::edit_entity(ds, &e);
-        ds.update(&target).unwrap();
+        ds.update(&target)?;
     }
+    Ok(())
 }
 
-fn add_entity(ds: &mut DataStore, principal: &Entity) {
+fn add_entity(ds: &mut DataStore, principal: &Entity) -> Result<(), DataError> {
     let new = match prompts::new_entity(ds, principal) {
         Some(e) => e,
-        None => return,
+        None => return Ok(()),
     };
     match prompts::confirm("Do you want to add it?", Yes) {
         Yes => match ds.add(&new) {
@@ -299,9 +311,10 @@ fn add_entity(ds: &mut DataStore, principal: &Entity) {
         },
         No => println!("ok, another time"),
     };
+    Ok(())
 }
 
-fn edit_today(ds: &mut DataStore, principal: &Entity) {
+fn edit_today(ds: &mut DataStore, principal: &Entity) -> Result<(), DataError> {
     let mut items = ds.agenda_until(&utils::today(), 0, 0);
     while !items.is_empty() {
         let target = match prompts::edit_entities(&items) {
@@ -310,16 +323,20 @@ fn edit_today(ds: &mut DataStore, principal: &Entity) {
         };
         // ask if to add an event
         if Yes == prompts::confirm("do you want to record a note?", No) {
-            add_note(ds, principal, Some(&target));
+            add_note(ds, principal, Some(&target))?;
         }
-        // TODO handle errors
         let target = prompts::edit_entity(ds, target);
-        ds.update(&target).unwrap();
+        ds.update(&target)?;
         items = ds.agenda_until(&utils::today(), 0, 0);
     }
+    Ok(())
 }
 
-fn add_note(ds: &mut DataStore, author: &Entity, subject: Option<&Entity>) {
+fn add_note(
+    ds: &mut DataStore,
+    author: &Entity,
+    subject: Option<&Entity>,
+) -> Result<(), DataError> {
     let mut evt = Event::action(
         "cli",
         "note",
@@ -332,12 +349,16 @@ fn add_note(ds: &mut DataStore, author: &Entity, subject: Option<&Entity>) {
         evt.actors.push(Actor::Subject(s.uid.clone()))
     }
     while Yes == prompts::confirm("add another actor", No) {
-        if let Some(e) = prompts::find_or_create(ds, "search:", author) {
+        if let Some((e, is_new)) = prompts::find_or_create(ds, "search:", author) {
+            if is_new {
+                ds.add(&e)?;
+            }
             let a = prompts::select_actor_role(&e);
             evt.actors.push(a);
         }
     }
-    ds.record(&evt).unwrap();
+    ds.record(&evt)?;
+    Ok(())
 }
 
 #[derive(Debug)]
