@@ -1,6 +1,5 @@
 pub mod context;
 
-
 /// The ledger module provide access to a database
 pub mod ledger;
 pub use ledger::{DataStore, EventFilter, ExportFormat};
@@ -15,3 +14,8 @@ pub use model::{
 /// dates and to format uid slugs
 pub mod utils;
 pub use utils::*;
+
+/// This is for text manipulation
+/// like entity extraction
+pub mod parser;
+pub use parser::parse_text;
