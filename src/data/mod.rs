@@ -18,4 +18,4 @@ pub use utils::*;
 /// This is for text manipulation
 /// like entity extraction
 pub mod parser;
-pub use parser::parse_text;
+pub use parser::find_labels;

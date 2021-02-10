@@ -1,28 +1,54 @@
-use super::Entity;
-
-/// Parse a text and returns a list of identified
-/// entities
-pub fn parse_text(txt: &str) -> Vec<String> {
-    let mut labels: Vec<String> = Vec::new();
-    let (open_tag, close_tag) = ("[[", "]]");
-    // moving offset for finding labels
-    let mut offset = 0;
-    // while we get a match for the opening tag
-    while let Some(oi) = txt[offset..].find(open_tag) {
-        // move the offset after the tag
-        offset += oi + open_tag.len();
-        // search for the closing tag
-        match txt[offset..].find(close_tag) {
-            Some(eob) => {
-                // if there is a closing tag then we
-                let (b, e) = (offset, offset + eob);
-                labels.push(txt[b..e].to_owned());
-                offset += eob + close_tag.len();
-            }
-            _ => {}
-        }
+///advance in a string search for the last consecutive index  of a search string
+fn last_consecutive_index(txt: &str, from: usize, search: &str) -> usize {
+    let mut index = from + 1;
+    if index >= txt.len() {
+        return from;
     }
-    labels
+    while txt[index..].starts_with(search) {
+        index += 1;
+    }
+    index - 1
+}
+
+/// Parse a text and extract labels matching [[..]] pattern
+pub fn find_labels(txt: &str) -> Vec<String> {
+    let (open_tag, close_tag) = ("[[", "]]");
+    // keep track of all starting offsets
+    let mut offsets: Vec<(usize, usize)> = Vec::new();
+    // moving offset for finding labels
+    match txt.find(open_tag) {
+        Some(first_index) => {
+            let mut offset = first_index;
+            'main: loop {
+                match txt[offset..].find(open_tag) {
+                    Some(index) => {
+                        let index = last_consecutive_index(&txt[offset..], index, open_tag);
+                        offsets.push((offset, offset + index));
+                        offset += index + open_tag.len();
+                    }
+                    None => {
+                        offsets.push((offset, txt.len()));
+                        break 'main;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    // now we have the list of indexes [[ ... [[ ... [[
+    // can loop and find the closest matching closing tag
+    offsets
+        .iter()
+        .map(|(b, e)| match txt[*b..*e].find(close_tag) {
+            Some(ci) => Some(txt[*b..*b + ci].to_owned()),
+            _ => None,
+        })
+        .filter(|v| match v {
+            Some(label) => !label.is_empty(),
+            _ => false,
+        })
+        .map(|v| v.unwrap())
+        .collect()
 }
 
 #[cfg(test)]
@@ -49,8 +75,12 @@ mod tests {
                 vec!["Good"],
             ),
             (
-                "[[Good]] or bad [[ something wrong[[]]",
-                vec!["Good", ""],
+                "[[ [[Good]] or bad [[ something wrong[[]][[[[[",
+                vec!["Good"],
+            ),
+            (
+                "[[[Good]] or [[bad]]] [[ something wrong[[]]",
+                vec!["Good", "bad"],
             ),
         ];
 
@@ -58,7 +88,7 @@ mod tests {
             println!("test_getters#{}", i);
             let (text, labels) = t;
 
-            let r = parse_text(text);
+            let r = find_labels(text);
             assert_eq!(r, *labels);
         }
     }
