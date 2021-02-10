@@ -126,8 +126,9 @@ pub fn principal_entity() -> Entity {
         .with_confirmation("repeat the password", "password doesn't match!")
         .interact_on(&Term::stdout())
         .ok();
-    Entity::from(&name, "person")
+    Entity::from(&name)
         .unwrap()
+        .with_class("person")
         .with_password(pass.as_ref())
 }
 
@@ -144,7 +145,7 @@ pub fn root_entity() -> Entity {
         "How would you call the main center of your interest",
         Feat::NonEmpty,
     );
-    Entity::from(&name, class).unwrap()
+    Entity::from(&name).unwrap().with_class(class)
 }
 
 pub fn new_entity(ds: &DataStore, sponsor: &Entity) -> Option<Entity> {
@@ -176,7 +177,10 @@ pub fn new_entity(ds: &DataStore, sponsor: &Entity) -> Option<Entity> {
         ],
     );
     // we have enough to create the entity
-    let mut e = Entity::from(&name, class).unwrap().with_sponsor(sponsor);
+    let mut e = Entity::from(&name)
+        .unwrap()
+        .with_sponsor(sponsor)
+        .with_class(class);
     // action
     let rtw = utils::random_timewindow(1, 12, Some('w'));
     let tw = select(

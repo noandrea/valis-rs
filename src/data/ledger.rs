@@ -591,7 +591,10 @@ impl DataStore {
                 continue;
             }
             // Rule#3
-            let mut score = 10;
+            let mut score = 15;
+            if !e.is_classified() {
+                score -= 5;
+            }
             if e.description.is_empty() {
                 score -= 1;
             }
@@ -607,7 +610,7 @@ impl DataStore {
             if e.relationships.is_empty() {
                 score -= 2;
             }
-            if score < 6 {
+            if score < 9 {
                 to_edit.push((EditType::MaybeIncomplete, e.to_owned()));
             }
         }
@@ -635,12 +638,12 @@ mod tests {
         // create a datastore
         let mut orig = DataStore::open(&d.path().join("orig")).unwrap();
         // insert records
-        let e = Entity::from("bob", "person")
+        let e = Entity::from("bob")
             .unwrap()
             .self_sponsored()
             .with_handle("email", "bob@acme.com");
         assert_eq!(orig.insert(&e).is_ok(), true);
-        let e = Entity::from("alice", "person")
+        let e = Entity::from("alice")
             .unwrap()
             .with_sponsor(&e)
             .with_handle("email", "alice@acme.com");
@@ -668,7 +671,7 @@ mod tests {
         // reopen should not be possible
         assert_eq!(DataStore::open(d.path()).is_err(), true);
         // insert a records
-        let bob = Entity::from("bob", "person").unwrap();
+        let bob = Entity::from("bob").unwrap();
         ds.insert(&bob).unwrap();
         assert_eq!(ds.entities.len(), 1);
         // fetch it back
@@ -689,13 +692,13 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // insert a records
-        let bob = Entity::from("Bob Marley", "person")
+        let bob = Entity::from("Bob Marley")
             .unwrap()
             .self_sponsored()
             .tag(Tag::from("skill", "singing"))
             .tag(Tag::from("group", "The Wailers"));
         assert_eq!(ds.insert(&bob).is_ok(), true);
-        let alice = Entity::from("Alice", "person")
+        let alice = Entity::from("Alice")
             .unwrap()
             .self_sponsored()
             .tag(Tag::from("skill", "cards"))
@@ -735,12 +738,12 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // owner
-        let owner = Entity::from("bob", "person")
+        let owner = Entity::from("bob")
             .unwrap()
             .self_sponsored()
             .with_next_action(utils::date(3, 3, 2020), "whatever".to_string());
         // root object
-        let root = Entity::from("acme", "org")
+        let root = Entity::from("acme")
             .unwrap()
             .with_sponsor(&owner)
             .with_next_action(utils::date(3, 10, 2020), "whatever".to_string());
@@ -768,7 +771,10 @@ mod tests {
             ("D", "person", "02.02.2021", &owner),
         ];
         data.iter().for_each(|(name, class, nad, sp)| {
-            let mut e = Entity::from(name, class).unwrap().with_sponsor(sp);
+            let mut e = Entity::from(name)
+                .unwrap()
+                .with_class(class)
+                .with_sponsor(sp);
             e.next_action(utils::date_from_str(nad).unwrap(), "yea".to_string());
             ds.insert(&e).unwrap();
         });
@@ -816,7 +822,7 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // bob
-        let bob = Entity::from("bob", "person")
+        let bob = Entity::from("bob")
             .unwrap()
             .self_sponsored()
             .with_next_action(date(1, 1, 2000), "something".to_string());
@@ -831,7 +837,7 @@ mod tests {
         // check that there is only one action in the db
         assert_eq!(ds.actions.len(), 1);
         // now add alice
-        let alice = Entity::from("alice", "person")
+        let alice = Entity::from("alice")
             .unwrap()
             .self_sponsored()
             .with_handle("email", "alice@acme.com");
@@ -841,7 +847,7 @@ mod tests {
         //assert_eq!(ds.update(&bob).is_err(), true);
         assert_eq!(ds.update(&bob).err().unwrap(), DataError::IDAlreadyTaken);
         // // but what if a new player arrives and tries to hijack alice?
-        let martha = Entity::from("martha", "person")
+        let martha = Entity::from("martha")
             .unwrap()
             .with_sponsor(&bob)
             .with_handle("email", "alice@acme.com");
@@ -867,7 +873,7 @@ mod tests {
         for i in 0..100 {
             let name = format!("e_{}", i);
 
-            let e = Entity::from(&name, "person")
+            let e = Entity::from(&name)
                 .unwrap()
                 .self_sponsored()
                 .with_handle("code", &name)
@@ -875,7 +881,7 @@ mod tests {
             assert_eq!(ds.insert(&e).is_ok(), true);
         }
         // create a new entity
-        let e = Entity::from("center", "person")
+        let e = Entity::from("center")
             .unwrap()
             .self_sponsored()
             .with_handle("code", "center")
@@ -918,7 +924,7 @@ mod tests {
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
         // bob
-        let bob = Entity::from("bob", "person")
+        let bob = Entity::from("bob")
             .unwrap()
             .self_sponsored()
             .with_next_action(date(1, 1, 2000), "something".to_string());

@@ -195,8 +195,8 @@ mod test {
         assert_eq!(ctx.size(), 0);
         assert_eq!(ctx.list().len(), 0);
         // create ds entities
-        let owner = Entity::from("bob", "person").unwrap();
-        let root = Entity::from("acme", "person").unwrap();
+        let owner = Entity::from("bob").unwrap();
+        let root = Entity::from("acme").unwrap();
         // add context
         let ds = ctx.new_datastore(&owner, &root);
         assert_eq!(ds.is_ok(), true);

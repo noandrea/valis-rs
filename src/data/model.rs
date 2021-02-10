@@ -596,7 +596,7 @@ pub struct Entity {
     pub description: String,
     pub handles: HashMap<String, String>, // email, telegram, phone
     // contextual data
-    class: String, // person / object / company / project
+    pub class: String, // person / object / company / project
     pub state: RelState,
     pub quality: RelQuality,
     pub sponsor: Uuid, // the uid of the sponsor for this thing that must be a person
@@ -648,6 +648,11 @@ impl Entity {
     /// Tells if the Entity as a tag
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.contains_key(&utils::slugify(&tag))
+    }
+
+    /// Tells wherever the entity has a class set
+    pub fn is_classified(&self) -> bool {
+        !self.class.is_empty() && self.class != "n/a"
     }
 
     /// actions
@@ -737,6 +742,13 @@ impl Entity {
         self.touch()
     }
 
+    /// Set the entity class
+    /// eg: person/thing/project
+    pub fn with_class(mut self, class: &str) -> Self {
+        self.class = class.to_owned();
+        self.touch()
+    }
+
     pub fn change_quality(mut self, new: RelQuality) -> Self {
         if self.quality == new {
             return self;
@@ -805,8 +817,8 @@ impl Entity {
         next_action_note: &str,
         relationships: Vec<Rel>,
         visibility: Vec<ACL>,
-    ) -> Result<Entity> {
-        let tx = Entity {
+    ) -> Entity {
+        Entity {
             uid,
             name: name.trim().to_string(),
             pass,
@@ -830,20 +842,24 @@ impl Entity {
             next_action_note: next_action_note.to_string(),
             relationships,
             visibility,
-        };
-        Ok(tx)
+        }
     }
 
-    pub fn from(name: &str, class: &str) -> Result<Entity> {
+    pub fn from(name: &str) -> Result<Entity> {
+        if name.trim().is_empty() {
+            return Err(ValisError::InputError(
+                "entity name cannot be empty".to_owned(),
+            ));
+        }
         let uid = Uuid::new_v4();
-        Entity::new(
+        Ok(Entity::new(
             uid,
             name,
             None,
             vec![],
             "",
             vec![],
-            class,
+            "n/a",
             RelState::Active(utils::today(), None),
             RelQuality::Neutral(utils::today(), None),
             uid,
@@ -854,7 +870,7 @@ impl Entity {
             "to update",
             vec![],
             vec![],
-        )
+        ))
     }
 
     pub fn uid(&self) -> String {
@@ -867,7 +883,10 @@ impl Entity {
     pub fn from_str(s: &str) -> Result<Entity> {
         // match s.split_once(':') { // until it becomes available
         match utils::split_once(s, ':') {
-            Some((class, name)) => Entity::from(name.trim(), class.trim()),
+            Some((class, name)) => {
+                let e = Entity::from(name.trim()).unwrap().with_class(class.trim());
+                Ok(e)
+            }
             _ => Err(ValisError::GenericError(
                 "cannot parse input string".to_string(),
             )),
@@ -914,7 +933,7 @@ mod tests {
                     vec![("a", false)],              // tags
                     "",                              // description
                     vec![("h", "v", false)],         // handles
-                    "person",                        // class
+                    (true, "person"),                // classified, class
                     RelState::Active(today(), None), // state
                     today(),                         // created_on
                     today(),                         // updated_on
@@ -932,7 +951,7 @@ mod tests {
                     vec![("a", false)],              // tags
                     "",                              // description
                     vec![("h", "v", false)],         // handles
-                    "person",                        // class
+                    (false, "n/a"),                  // classified, class
                     RelState::Active(today(), None), // state
                     today(),                         // created_on
                     today(),                         // updated_on
@@ -980,7 +999,11 @@ mod tests {
                 assert_eq!(got.handles.contains_key(*handle), *is_set);
                 // TODO test the value
             });
-            assert_eq!(got.class, *class);
+            // class
+            let (classified, class_value) = class;
+            assert_eq!(got.class, *class_value);
+            assert_eq!(got.is_classified(), *classified);
+            // action dates
             assert_eq!(got.next_action_date, *next_action_date);
 
             // check the tags
