@@ -4,6 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/valis)](https://crates.io/crates/valis)
 [![Coverage Status](https://coveralls.io/repos/github/noandrea/valis-rs/badge.svg?branch=master)](https://coveralls.io/github/noandrea/valis-rs?branch=master)
+[![dependency status](https://deps.rs/repo/github/noandrea/valis-rs/status.svg)](https://deps.rs/repo/github/noandrea/valis-rs)
 
 This is the [VALIS](https://meetvalis.com) library and command line client.
 

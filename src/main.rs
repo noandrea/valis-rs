@@ -8,7 +8,7 @@ mod prompts;
 use prompts::{PolarAnswer::*, UserConfig};
 
 use clap::{App, Arg};
-use directories::ProjectDirs;
+use directories_next::ProjectDirs;
 use pad::{Alignment, PadStr};
 
 use std::error;
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     // }
 
     // this is instead the config path
-    let cfg_path = dirs.preference_dir().join(CFG_USER);
+    let cfg_path = dirs.config_dir().join(CFG_USER);
     // if the context manager is empty then setup
     if ctxm.is_empty() {
         // if no exit

@@ -19,7 +19,6 @@ slug = "0.1.4"
 lazy_static = "1.4.0"
 regex = "1.4.3"
 clap = "3.0.0-beta.2"
-directories = "3.0.1"
 dialoguer = "0.7.1"
 blake3 = "0.3.7"
 pad = "0.1.6"
@@ -34,6 +33,7 @@ serde_json = "1.0.61"
 strum = { version = "0.20.0", features = ["derive"] }
 log = "0.4.13"
 simplelog = "0.9.0"
+directories-next = "2.0.0"
 
 [dev-dependencies]
-tempdir = "0.3.7"
+tempfile = "3.2.0"
