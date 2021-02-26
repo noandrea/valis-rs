@@ -69,6 +69,15 @@ pub fn input(q: &str, empty: Feat) -> String {
         .unwrap()
 }
 
+/// optional input return None if the input is empty
+pub fn input_opt(q: &str) -> Option<String> {
+    let i = input(q, Feat::Empty);
+    match i.is_empty() {
+        true => None,
+        false => Some(i),
+    }
+}
+
 /// shortcut for Select optional input
 pub fn select_opt<'a, T: ?Sized>(q: &str, opts: Vec<(&'a str, &'a T)>) -> Option<&'a T> {
     match Select::with_theme(&ColorfulTheme::default())
@@ -148,11 +157,28 @@ pub fn root_entity() -> Entity {
     Entity::from(&name).unwrap().with_class(class)
 }
 
-pub fn new_entity(ds: &DataStore, sponsor: &Entity) -> Option<Entity> {
-    println!("let's add a new entity");
-    // get the name
-    let name = input("Name?", NonEmpty);
-    let existing = ds.search(&name);
+pub fn new_entity(name: &str, sponsor: &Entity) -> Entity {
+    // get the class
+    let class = select(
+        "how will describe that",
+        vec![
+            ("Person", "person"),
+            ("Organization", "org"),
+            ("Project", "project"),
+            ("Thing", "thing"),
+        ],
+    );
+    // we have enough to create the entity
+    Entity::from(&name)
+        .unwrap()
+        .with_sponsor(sponsor)
+        .with_class(class)
+}
+
+/// Create a new entity, but before doing so do a fuzzy search about what
+/// is already in the database
+pub fn new_entity_unless_exists(ds: &DataStore, name: &str, sponsor: &Entity) -> Option<Entity> {
+    let existing = ds.search(name);
     if !existing.is_empty() {
         let msg = format!(
             "I've found similar entries:\n- {}\n add anyway?",
@@ -166,72 +192,26 @@ pub fn new_entity(ds: &DataStore, sponsor: &Entity) -> Option<Entity> {
             return None;
         }
     }
-    // get the class
-    let class = select(
-        "how will describe that",
-        vec![
-            ("Person", "person"),
-            ("Organization", "org"),
-            ("Project", "project"),
-            ("Thing", "thing"),
-        ],
-    );
-    // we have enough to create the entity
-    let mut e = Entity::from(&name)
-        .unwrap()
-        .with_sponsor(sponsor)
-        .with_class(class);
-    // action
-    let rtw = utils::random_timewindow(1, 12, Some('w'));
-    let tw = select(
-        &format!("when shall you be reminded about {}", name),
-        vec![
-            ("Today", "0d"),
-            ("Tomorrow", "1d"),
-            ("In 3 days", "3d"),
-            ("In a week", "1w"),
-            ("In two weeks", "2w"),
-            ("In one month", "1m"),
-            ("In three months", "3m"),
-            ("In six months", "6m"),
-            ("Later", &rtw),
-        ],
-    );
+    Some(new_entity(name, sponsor))
+}
 
-    let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
-    let nan = match editor("leave a note for the reminder") {
-        Some(x) => x,
-        None => "".to_owned(),
-    };
-    e.next_action(nad, nan);
-
-    println!(
-        "I'll remind you on {} about {} with:\n{}",
-        e.next_action_date, name, e.next_action_note
-    );
-    // info
-    if let Yes = confirm("would you like to add some details?", No) {
-        if let Some(desc) = editor(&format!("write a note about {}", name)) {
-            e.description = desc;
+/// Search an entity in the datastore or ask to create a new
+/// one if no result is found
+///
+/// Will return an Option<(Entity, bool)> where the bool indicates
+/// if the entity returned is new (has been created)
+pub fn select_or_create(ds: &DataStore, name: &str, sponsor: &Entity) -> Option<(Entity, bool)> {
+    let res = ds.search(name);
+    if res.is_empty() {
+        if No == confirm("nothing found, add instead?", No) {
+            return None;
         }
-        // handles
-        while let Yes = confirm("add an handle?", Yes) {
-            let handles = vec![
-                ("Email", "email"),
-                ("Nickname", "nick"),
-                ("Website", "url"),
-                ("Telegram", "telegram"),
-                ("LinkedIn", "linkedin"),
-                ("Mobile", "mobile"),
-            ];
-            let prefix = select("what do you want to set", handles);
-            let label = input(&format!("what is the {} handle", prefix), Feat::NonEmpty);
-            e = e.with_handle(prefix, &label);
-        }
-    };
-
-    // return
-    Some(e)
+        return Some((new_entity(name, sponsor), true));
+    }
+    if let Some(r) = select_entity("please select one  (or esc/q to cancel):", &res) {
+        return Some((r.clone(), false));
+    }
+    None
 }
 
 pub fn edit_entities(items: &[Entity]) -> Option<&Entity> {
@@ -254,37 +234,56 @@ pub fn edit_entities(items: &[Entity]) -> Option<&Entity> {
     }
 }
 
-pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
-    let mut target = target.clone();
-    // action
-    let prompt = format!(
-        "next action date is {}, do you want to change it?",
-        utils::human_date(&target.next_action_date)
+/// Edit the next action date and note
+fn edit_next_action(e: &mut Entity) {
+    let rtw = utils::random_timewindow(1, 12, Some('w'));
+    let tw = select(
+        &format!("when shall you be reminded about {}", e.name()),
+        vec![
+            ("Today", "0d"),
+            ("Tomorrow", "1d"),
+            ("In 3 days", "3d"),
+            ("In a week", "1w"),
+            ("In two weeks", "2w"),
+            ("In one month", "1m"),
+            ("In three months", "3m"),
+            ("In six months", "6m"),
+            ("Later", &rtw),
+        ],
     );
-    if Yes == confirm(&prompt, No) {
-        let rtw = utils::random_timewindow(1, 12, Some('w'));
-        let tw = select(
-            &"when shall you be reminded about it",
-            vec![
-                ("Today", "0d"),
-                ("Tomorrow", "1d"),
-                ("In 2 days", "2d"),
-                ("In 3 days", "3d"),
-                ("In a week", "1w"),
-                ("In two weeks", "2w"),
-                ("In one month", "1m"),
-                ("In three months", "3m"),
-                ("In six months", "6m"),
-                ("Later", &rtw),
-            ],
-        );
-        let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
-        let nan = match editor(&target.next_action_note) {
-            Some(x) => x,
-            _ => "".to_string(),
-        };
-        target.next_action(nad, nan);
-    }
+
+    let nad = TimeWindow::from_str(&tw).unwrap().offset(&utils::today());
+    let nan = match editor("leave a note for the reminder") {
+        Some(x) => x,
+        None => e.next_action_note.clone(),
+    };
+    e.next_action(nad, nan);
+}
+
+pub fn postpone(e: &mut Entity) {}
+
+pub fn edit_data(ds: &mut DataStore, target: &mut Entity) {
+    // info
+    if let Yes = confirm("would you like to add some details?", No) {
+        if let Some(desc) = editor(&format!("write a note about {}", target.name())) {
+            target.description = desc;
+        }
+        // handles
+        while let Yes = confirm("add an handle?", Yes) {
+            let handles = vec![
+                ("Email", "email"),
+                ("Nickname", "nick"),
+                ("Website", "url"),
+                ("Telegram", "telegram"),
+                ("LinkedIn", "linkedin"),
+                ("Mobile", "mobile"),
+            ];
+            let prefix = select("what do you want to set", handles);
+            let label = input(&format!("what is the {} handle", prefix), Feat::NonEmpty);
+            target.add_handle(prefix, &label);
+        }
+    };
+
     // ask for the quality
     let prompt = format!(
         "relationship is {}, is it still the case ?",
@@ -302,21 +301,20 @@ pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
                 ("Hostile", "😠"),
             ],
         );
-        target = match RelQuality::from_emoji(q, utils::today(), None) {
-            Some(q) => target.change_quality(q),
-            _ => target,
-        };
+        if let Some(q) = RelQuality::from_emoji(q, utils::today(), None) {
+            target.set_quality(q);
+        }
     }
     // -- advanced editing
     if No == confirm("do you want to edit more details?", No) {
         println!("ok");
-        return target;
+        return;
     }
     // relationships
     while Yes == confirm("relationships?", No) {
         if let Some(entity) = search(ds, "select target (enter to cancel)") {
             let rel = select_relationship(&entity);
-            target = target.add_relation(&rel);
+            target.add_relation(&rel);
         }
     }
     // handles
@@ -332,7 +330,7 @@ pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
         ];
         let prefix = select("what do you want to set", handles);
         let label = input(&format!("what is the {} handle", prefix), Feat::NonEmpty);
-        target = target.with_handle(prefix, &label);
+        target.add_handle(prefix, &label);
     }
     //tags
     while let Yes = confirm("shall we add a tag?", No) {
@@ -345,7 +343,7 @@ pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
         ];
         let prefix = select("tag type", tags);
         let label = input("what is the tag label", Feat::NonEmpty);
-        target = target.tag(Tag::from(&prefix, &label));
+        target.add_tag(Tag::from(&prefix, &label));
     }
     // description
     if Yes == confirm("do you want to edit the description?", No) {
@@ -363,6 +361,27 @@ pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
     if Yes == confirm("shall I save the changes?", Yes) {
         ds.update(&target).ok();
     }
+}
+
+pub fn edit_entity(ds: &mut DataStore, target: &Entity) -> Entity {
+    let mut target = target.clone();
+    match select_opt(
+        "what do you want to change",
+        vec![("Next action", "action"), ("Data", "data")],
+    ) {
+        Some("action") => {
+            edit_next_action(&mut target);
+            println!(
+                "I'll remind you on {} about {} with:\n{}",
+                target.next_action_date,
+                target.name(),
+                target.next_action_note
+            );
+        }
+        Some("data") => edit_data(ds, &mut target),
+        _ => {}
+    }
+
     target
 }
 
@@ -394,35 +413,6 @@ pub fn search(ds: &DataStore, q: &str) -> Option<Entity> {
                 }
                 match select_entity("please select one  (or esc/q to cancel):", &res) {
                     Some(r) => return Some(r.clone()),
-                    None => continue,
-                }
-            }
-        }
-    }
-}
-
-/// Search an entity in the datastore or ask to create a new
-/// one if no result is found
-///
-/// Will return an Option<(Entity, bool)> where the bool indicates
-/// if the entity returned is new (has been created)
-pub fn find_or_create(ds: &DataStore, q: &str, sponsor: &Entity) -> Option<(Entity, bool)> {
-    loop {
-        let pattern = input(q, Empty);
-        match pattern.as_str() {
-            "" => {
-                return None;
-            }
-            p => {
-                let res = ds.search(p);
-                if res.is_empty() {
-                    if No == confirm("nothing found, add instead?", No) {
-                        continue;
-                    }
-                    return Some((new_entity(ds, sponsor).unwrap(), true));
-                }
-                match select_entity("please select one  (or esc/q to cancel):", &res) {
-                    Some(r) => return Some((r.clone(), false)),
                     None => continue,
                 }
             }

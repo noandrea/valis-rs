@@ -126,13 +126,13 @@ impl ContextManager {
         let owner = owner
             .clone()
             .self_sponsored()
-            .tag(Tag::System("owner".to_owned()))
-            .tag(Tag::System("admin".to_owned()));
+            .with_tag(Tag::System("owner".to_owned()))
+            .with_tag(Tag::System("admin".to_owned()));
         // add more stuff to the root
         let root = root
             .clone()
             .with_sponsor(&owner)
-            .tag(Tag::System("root".to_owned()));
+            .with_tag(Tag::System("root".to_owned()));
         // get the dataset name and uid
         let ds_uid = utils::id(&Uuid::new_v4());
         let ds_name = String::from(root.name());

@@ -277,7 +277,10 @@ fn inspect(ds: &DataStore) -> Result<(), DataError> {
         println!("Events");
         for evt in ds.events(&e, EventFilter::Actions).iter() {
             println!("recorded at {} from {}", evt.recorded_at, evt.kind);
-            println!("{:?}", evt.content);
+            match &evt.content {
+                Some(c) => println!("{}", c),
+                None => println!("-no content-"),
+            };
             println!(">>>>>>>>>>>>");
             println!("Actors");
             for a in evt.actors.iter() {
@@ -300,7 +303,11 @@ fn update_entity(ds: &mut DataStore, _principal: &Entity) -> Result<(), DataErro
 }
 
 fn add_entity(ds: &mut DataStore, principal: &Entity) -> Result<(), DataError> {
-    let new = match prompts::new_entity(ds, principal) {
+    let name = match prompts::input_opt("name? (empty to cancel)") {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+    let new = match prompts::new_entity_unless_exists(ds, &name, principal) {
         Some(e) => e,
         None => return Ok(()),
     };
@@ -337,11 +344,35 @@ fn add_note(
     author: &Entity,
     subject: Option<&Entity>,
 ) -> Result<(), DataError> {
+    // ask to edit
+    let text = match prompts::editor("type in your note") {
+        Some(text) => text,
+        _ => {
+            println!("alright aborting");
+            return Ok(());
+        }
+    };
+    // see if something was found
+    let actors = valis::data::find_labels(&text)
+        .iter()
+        .map(|l| match utils::split_once(l, ':') {
+            Some((p, v)) => {
+                if let Some((e, is_new)) = prompts::select_or_create(ds, v, author) {
+                    if is_new {
+                        // TODO this unwrap shall be gone
+                        ds.add(&e).unwrap();
+                    }
+                }
+            }
+            None => {}
+        });
+
+    // set the event
     let mut evt = Event::action(
         "cli",
         "note",
         1,
-        prompts::editor("type in your note"),
+        Some(text),
         &[Actor::RecordedBy(author.uid)],
     );
 
@@ -349,12 +380,18 @@ fn add_note(
         evt.actors.push(Actor::Subject(s.uid.clone()))
     }
     while Yes == prompts::confirm("add another actor", No) {
-        if let Some((e, is_new)) = prompts::find_or_create(ds, "search:", author) {
-            if is_new {
-                ds.add(&e)?;
+        match prompts::input_opt("name") {
+            None => break,
+            Some(name) => {
+                if let Some((e, is_new)) = prompts::select_or_create(ds, &name, author) {
+                    if is_new {
+                        // TODO this unwrap shall be gone
+                        ds.add(&e).unwrap();
+                    }
+                    let a = prompts::select_actor_role(&e);
+                    evt.actors.push(a);
+                }
             }
-            let a = prompts::select_actor_role(&e);
-            evt.actors.push(a);
         }
     }
     ds.record(&evt)?;

@@ -381,7 +381,7 @@ impl Actor {
     pub fn from_str(input: &str) -> Result<Actor> {
         match utils::split_once(input, ':') {
             Some((p, v)) => Self::from(p, v),
-            _ => Err(ValisError::InputError("unrecognized".to_string())),
+            _ => Self::from("star", input),
         }
     }
 
@@ -389,10 +389,9 @@ impl Actor {
         match prefix {
             "auth" => Ok(Actor::RecordedBy(Uuid::from_str(uid)?)),
             "main" => Ok(Actor::Lead(Uuid::from_str(uid)?)),
-            "star" => Ok(Actor::Starring(Uuid::from_str(uid)?)),
             "back" => Ok(Actor::Background(Uuid::from_str(uid)?)),
             "subj" => Ok(Actor::Subject(Uuid::from_str(uid)?)),
-            _ => Err(ValisError::InputError("unrecognized".to_string())),
+            _ => Ok(Actor::Starring(Uuid::from_str(uid)?)),
         }
     }
 
@@ -697,6 +696,11 @@ impl Entity {
         self
     }
 
+    /// This is the same as touch but used in a mutable reference context
+    fn touch_as_ref(&mut self) {
+        self.updated_on = utils::today();
+    }
+
     /// Set the next action date and the note
     ///
     /// It does not change the updatd
@@ -718,10 +722,21 @@ impl Entity {
         self.touch()
     }
 
-    /// add a tag to an entity
-    pub fn tag(mut self, tag: Tag) -> Self {
+    pub fn add_handle(&mut self, label: &str, id: &str) {
+        self.handles.insert(label.to_owned(), id.to_owned());
+        self.touch_as_ref();
+    }
+
+    /// add a tag to an entity (chainable version)
+    pub fn with_tag(mut self, tag: Tag) -> Self {
         self.tags.insert(utils::slugify(&tag.to_string_full()), tag);
         self.touch()
+    }
+
+    /// add a tag to an entity
+    pub fn add_tag(&mut self, tag: Tag) {
+        self.tags.insert(utils::slugify(&tag.to_string_full()), tag);
+        self.touch_as_ref();
     }
 
     pub fn with_sponsor(mut self, sponsor: &Entity) -> Self {
@@ -749,17 +764,24 @@ impl Entity {
         self.touch()
     }
 
-    pub fn change_quality(mut self, new: RelQuality) -> Self {
-        if self.quality == new {
-            return self;
+    /// Update the relationship quality
+    pub fn set_quality(&mut self, new: RelQuality) {
+        if self.quality != new {
+            self.quality = new;
+            self.touch_as_ref();
         }
-        self.quality = new;
+    }
+
+    /// Add a relation to the entity (chainable version)
+    pub fn with_relation(mut self, rel: &Rel) -> Self {
+        self.relationships.push(rel.to_owned());
         self.touch()
     }
 
-    pub fn add_relation(mut self, rel: &Rel) -> Self {
+    /// Add a relation to the entity
+    pub fn add_relation(&mut self, rel: &Rel) {
         self.relationships.push(rel.to_owned());
-        self
+        self.touch_as_ref();
     }
 
     pub fn add_relation_with(mut self, target: &Entity, kind: RelType) -> Self {
