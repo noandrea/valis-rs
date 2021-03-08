@@ -358,7 +358,7 @@ fn add_note(
             return Ok(());
         }
     };
-    // see if something was found
+    // search for actors and add them to the event
     let actors = valis::data::find_labels(&text)
         .iter()
         .map(|l| match utils::split_once(l, ':') {
@@ -368,12 +368,16 @@ fn add_note(
                         // TODO this unwrap shall be gone
                         ds.add(&e).unwrap();
                     }
+                    // create an actor out of the entity
+                    return Some(Actor::from(p, &e.uid()).unwrap());
                 }
+                return None;
             }
-            None => {}
-        });
+            None => None,
+        })
+        .collect::<Vec<Option<Actor>>>();
 
-    // set the event
+    // create the event
     let mut evt = Event::action(
         "cli",
         "note",
@@ -381,7 +385,13 @@ fn add_note(
         Some(text),
         &[Actor::RecordedBy(author.uid)],
     );
-
+    // add all the actors found
+    actors.iter().for_each(|a| {
+        if let Some(actor) = a {
+            evt.actors.push(actor.to_owned());
+        }
+    });
+    // if there was a subject add that one as well
     if let Some(s) = subject {
         evt.actors.push(Actor::Subject(s.uid.clone()))
     }
