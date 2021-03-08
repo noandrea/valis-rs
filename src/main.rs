@@ -344,8 +344,14 @@ fn add_note(
     author: &Entity,
     subject: Option<&Entity>,
 ) -> Result<(), DataError> {
+    // if the subject is Some then add the
+    // next_action_message as preamble
+    let q = match subject {
+        Some(s) => format!("{}\n-----\n", s.next_action_note),
+        None => "type in your note".to_owned(),
+    };
     // ask to edit
-    let text = match prompts::editor("type in your note") {
+    let text = match prompts::editor(&q) {
         Some(text) => text,
         _ => {
             println!("alright aborting");
