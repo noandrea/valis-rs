@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         )
         .subcommand(App::new("export").about("export the database"))
         .subcommand(App::new("import").about("import the database"))
+        .subcommand(App::new("summary").about("prints the agenda summary"))
         .get_matches();
 
     // first, see if there is the config dir
@@ -135,9 +136,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         };
     };
 
-    println!("Welcome back {}", principal);
-    println!("you are using the {} context", cfg.ctx);
-
     // command line
     match matches.subcommand() {
         Some(("export", c)) => {
@@ -150,7 +148,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
             ds.export(Path::new(export_path), ExportFormat::Json)?;
             println!("dataset exported in {}", export_path);
         }
+        Some(("summary", _)) => {
+            let todo = ds.agenda_until(&utils::today(), 0, 0).len();
+            println!(
+                "There are {} points for the agenda today for the {} context",
+                todo, cfg.ctx
+            );
+        }
         Some((&_, _)) | None => {
+            println!("Welcome back {}", principal);
+            println!("you are using the {} context", cfg.ctx);
             while let Some(action) = prompts::menu() {
                 let out = match action.as_ref() {
                     "note" => add_note(&mut ds, &principal, None),
