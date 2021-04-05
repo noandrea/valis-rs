@@ -41,7 +41,7 @@ mod tests {
     use super::*;
     #[test]
     fn test_user() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = tempfile::TempDir::new().unwrap();
         let c = d.path().join("config.toml");
 
         let uc = UserConfig {

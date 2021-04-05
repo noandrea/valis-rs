@@ -186,7 +186,7 @@ mod test {
 
     #[test]
     fn test_context_manager() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = tempfile::TempDir::new().unwrap();
         // try to create a context
         let ctx = ContextManager::new(&d.path());
         assert_eq!(ctx.is_ok(), true);

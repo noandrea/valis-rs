@@ -630,10 +630,11 @@ mod tests {
     use super::model::*;
     use super::utils::*;
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_import_export() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         let p = d.path().join("export.json");
         // create a datastore
         let mut orig = DataStore::open(&d.path().join("orig")).unwrap();
@@ -664,7 +665,7 @@ mod tests {
 
     #[test]
     fn test_datastore() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
@@ -687,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_search() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
@@ -695,15 +696,15 @@ mod tests {
         let bob = Entity::from("Bob Marley")
             .unwrap()
             .self_sponsored()
-            .tag(Tag::from("skill", "singing"))
-            .tag(Tag::from("group", "The Wailers"));
+            .with_tag(Tag::from("skill", "singing"))
+            .with_tag(Tag::from("group", "The Wailers"));
         assert_eq!(ds.insert(&bob).is_ok(), true);
         let alice = Entity::from("Alice")
             .unwrap()
             .self_sponsored()
-            .tag(Tag::from("skill", "cards"))
-            .tag(Tag::from("address", "Wonderland"))
-            .tag(Tag::from("skill", "singing"));
+            .with_tag(Tag::from("skill", "cards"))
+            .with_tag(Tag::from("address", "Wonderland"))
+            .with_tag(Tag::from("skill", "singing"));
         assert_eq!(ds.insert(&alice).is_ok(), true);
         // build index
         ds.build_search_index();
@@ -733,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_setup() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
@@ -817,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_update() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
@@ -865,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_relationships() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();
@@ -919,7 +920,7 @@ mod tests {
 
     #[test]
     fn test_events() {
-        let d = tempdir::TempDir::new("valis").unwrap();
+        let d = TempDir::new().unwrap();
         println!("dir is {:?}", d);
         // open the datastore
         let mut ds = DataStore::open(d.path()).unwrap();

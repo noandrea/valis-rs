@@ -1244,7 +1244,7 @@ fn test_actor() {
             ),
         ),
         (
-            "whatever:a2199fbf-85de-42b0-a8e1-fb77241b6712",
+            "",
             Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
             (
                 Err(()),
