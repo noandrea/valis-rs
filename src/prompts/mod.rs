@@ -4,6 +4,7 @@ use ::valis::data::{
     model::{Actor, Entity, Rel, RelQuality, Tag, TimeWindow},
     utils,
 };
+use chrono::NaiveDate;
 use dialoguer::console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Editor, Input, Password, Select};
 use std::str::FromStr;
@@ -260,7 +261,14 @@ fn edit_next_action(e: &mut Entity) {
     e.next_action(nad, nan);
 }
 
-pub fn postpone(e: &mut Entity) {}
+/// Delay the next action date of an entity automatically in the future.
+/// set the next_action_date to a moment in the future and the updated_on to the current date
+pub fn delay_action(e: &mut Entity) {
+    let rtw = utils::random_timewindow(3, 21, Some('d'));
+    let nad = TimeWindow::from_str(&rtw).unwrap().offset(&utils::today());
+    e.next_action_date = nad;
+    e.next_action_updated_on = utils::today();
+}
 
 pub fn edit_data(ds: &mut DataStore, target: &mut Entity) {
     // info
@@ -448,10 +456,10 @@ pub fn menu() -> Option<String> {
         "hello there, what shall we do? esc/q to quit",
         vec![
             ("Quick note", "note"),
-            ("Agenda", "agenda"),
-            ("Dig up today", "today"),
+            ("Actionable", "today"),
             ("Audit", "inspect"),
             ("Update", "update"),
+            ("Overview", "agenda"),
             ("Add new", "add"),
             ("Suggest what to do", "hint"),
             ("Change context", "change_context"),

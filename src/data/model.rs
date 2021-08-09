@@ -180,14 +180,15 @@ impl fmt::Display for TimeWindow {
 /// Possible relation state are
 /// - Active : the thing is a active in the context
 /// - Passive: the thing is not directly engaged in a context but somehow still present
-/// - Former: there isn't a connection anymore, with a date indicating when the connection was broken
+/// - Former: there isn't a connection anymore, with a date indicating when the connection was interrupted
+/// - Broken: there is no more connection
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RelState {
     Root, // this would be the center of the application
     Active(NaiveDate, Option<NaiveDate>),
     Passive(NaiveDate, Option<NaiveDate>),
     Former(NaiveDate, Option<NaiveDate>),
-    Disabled(NaiveDate, Option<NaiveDate>),
+    Broken(NaiveDate, Option<NaiveDate>),
 }
 impl RelState {
     pub fn emoji(&self) -> String {
@@ -196,7 +197,7 @@ impl RelState {
             Self::Active(_, _) => "🟢".to_owned(),
             Self::Passive(_, _) => "⚪".to_owned(),
             Self::Former(_, _) => "⚫".to_owned(),
-            Self::Disabled(_, _) => "-".to_owned(),
+            Self::Broken(_, _) => "-".to_owned(),
         }
     }
 }
@@ -427,7 +428,7 @@ impl fmt::Display for Actor {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Event {
     pub uid: Uuid,
     pub recorded_at: DateTime<FixedOffset>,
@@ -477,6 +478,12 @@ impl Event {
             actors: actors.to_owned(),
             visibility: vec![],
         }
+    }
+
+    /// The delay is a special action that records that an action
+    /// on a subject has been postponed
+    pub fn delay(source: &str, weight: usize, actors: &[Actor]) -> Event {
+        return Event::action(source, "delay", weight, None, actors);
     }
 
     pub fn uid(&self) -> String {
@@ -570,7 +577,7 @@ impl fmt::Display for RelType {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Rel {
     pub kind: RelType,
     pub target: Uuid,
@@ -654,12 +661,22 @@ impl Entity {
         !self.class.is_empty() && self.class != "n/a"
     }
 
+    /// Tells whenever the relationship entity is not permanently broken
+    pub fn is_alive(&self) -> bool {
+        match self.state {
+            RelState::Broken(_, _) => false,
+            _ => true,
+        }
+    }
+
     /// actions
     pub fn action_within(&self, date: &NaiveDate) -> bool {
         self.next_action_date <= *date
     }
 
-    /// actions
+    /// Ranges are
+    /// from inclusive
+    /// to - exclusive
     pub fn action_within_range(&self, from: &NaiveDate, to: &NaiveDate) -> bool {
         self.next_action_date >= *from && self.next_action_date < *to
     }
@@ -1196,81 +1213,84 @@ mod tests {
             assert_eq!(tag_exp.to_string_full(), *full);
         }
     }
-}
 
-#[test]
-fn test_acl() {
-    let tests = vec![
-        (
-            "group:Management",
-            ACL::Limited(Tag::Group("Management".to_string())),
-            (Ok(()), "group:management"),
-        ),
-        ("public", ACL::Public, (Ok(()), "public")),
-        ("", ACL::Public, (Ok(()), "public")),
-        ("sponsor", ACL::Sponsor, (Ok(()), "sponsor")),
-        ("whatever", ACL::Public, (Err(()), "")),
-    ];
-
-    for (i, t) in tests.iter().enumerate() {
-        println!("test_acl#{}", i);
-        let (acl_in, acl_exp, acl_shapes) = t;
-        let (res, label) = acl_shapes;
-
-        let acl = ACL::from_str(acl_in);
-        assert_eq!(acl.is_err(), res.is_err());
-        if acl.is_err() {
-            return;
-        }
-        assert_eq!(acl.unwrap(), *acl_exp);
-        assert_eq!(acl_exp.to_string(), *label);
-    }
-}
-
-#[test]
-fn test_actor() {
-    let tests = vec![
-        (
-            "auth:a2199fbf-85de-42b0-a8e1-fb77241b6712",
-            Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
+    #[test]
+    fn test_acl() {
+        let tests = vec![
             (
-                Ok(()),
-                (
-                    "RecordedBy".to_string(),
-                    Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
-                ),
-                "a2199fbf85de42b0a8e1fb77241b6712",
-                "author:a2199fbf85de42b0a8e1fb77241b6712",
+                "group:Management",
+                ACL::Limited(Tag::Group("Management".to_string())),
+                (Ok(()), "group:management"),
             ),
-        ),
-        (
-            "",
-            Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
-            (
-                Err(()),
-                (
-                    "Starring".to_string(),
-                    Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
-                ),
-                "a2199fbf85de42b0a8e1fb77241b6712",
-                "star:a2199fbf85de42b0a8e1fb77241b6712",
-            ),
-        ),
-    ];
+            ("public", ACL::Public, (Ok(()), "public")),
+            ("", ACL::Public, (Ok(()), "public")),
+            ("sponsor", ACL::Sponsor, (Ok(()), "sponsor")),
+            ("whatever", ACL::Public, (Err(()), "")),
+        ];
 
-    for (i, t) in tests.iter().enumerate() {
-        println!("test_actor#{}", i);
-        let (actor_in, actor_exp, actor_shapes) = t;
-        let (res, role, uid, to_str) = actor_shapes;
+        for (i, t) in tests.iter().enumerate() {
+            println!("test_acl#{}", i);
+            let (acl_in, acl_exp, acl_shapes) = t;
+            let (res, label) = acl_shapes;
 
-        let actor = Actor::from_str(actor_in);
-        assert_eq!(actor.is_err(), res.is_err());
-        if actor.is_err() {
-            return;
+            let acl = ACL::from_str(acl_in);
+            assert_eq!(acl.is_err(), res.is_err());
+            if acl.is_err() {
+                return;
+            }
+            assert_eq!(acl.unwrap(), *acl_exp);
+            assert_eq!(acl_exp.to_string(), *label);
         }
-        assert_eq!(actor.unwrap(), *actor_exp);
-        assert_eq!(actor_exp.role(), *role);
-        assert_eq!(actor_exp.uid(), *uid);
-        assert_eq!(actor_exp.to_string(), *to_str);
     }
+
+    #[test]
+    fn test_actor() {
+        let tests = vec![
+            (
+                "auth:a2199fbf-85de-42b0-a8e1-fb77241b6712",
+                Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
+                (
+                    Ok(()),
+                    (
+                        "RecordedBy".to_string(),
+                        Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
+                    ),
+                    "a2199fbf85de42b0a8e1fb77241b6712",
+                    "author:a2199fbf85de42b0a8e1fb77241b6712",
+                ),
+            ),
+            (
+                "",
+                Actor::RecordedBy(Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap()),
+                (
+                    Err(()),
+                    (
+                        "Starring".to_string(),
+                        Uuid::from_str("a2199fbf-85de-42b0-a8e1-fb77241b6712").unwrap(),
+                    ),
+                    "a2199fbf85de42b0a8e1fb77241b6712",
+                    "star:a2199fbf85de42b0a8e1fb77241b6712",
+                ),
+            ),
+        ];
+
+        for (i, t) in tests.iter().enumerate() {
+            println!("test_actor#{}", i);
+            let (actor_in, actor_exp, actor_shapes) = t;
+            let (res, role, uid, to_str) = actor_shapes;
+
+            let actor = Actor::from_str(actor_in);
+            assert_eq!(actor.is_err(), res.is_err());
+            if actor.is_err() {
+                return;
+            }
+            assert_eq!(actor.unwrap(), *actor_exp);
+            assert_eq!(actor_exp.role(), *role);
+            assert_eq!(actor_exp.uid(), *uid);
+            assert_eq!(actor_exp.to_string(), *to_str);
+        }
+    }
+
+    #[test]
+    fn test_progress() {}
 }

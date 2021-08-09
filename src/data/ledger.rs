@@ -375,8 +375,7 @@ impl DataStore {
             .collect::<Vec<Entity>>()
     }
 
-    /// Return aggregation summary for tags
-    ///
+    /// Return the agenda of act between two dates
     pub fn agenda(
         &self,
         since: &NaiveDate,
@@ -393,10 +392,7 @@ impl DataStore {
                 let raw = self.entities.get(v).unwrap().unwrap();
                 bincode::deserialize(&raw).unwrap()
             })
-            .filter(|e: &Entity| {
-                // TODO: also match disabled records
-                e.action_within_range(since, until)
-            })
+            .filter(|e: &Entity| e.is_alive() && e.action_within_range(since, until))
             .collect::<Vec<Entity>>()
     }
 

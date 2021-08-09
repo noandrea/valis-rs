@@ -19,6 +19,8 @@ use chrono::NaiveDate;
 use Alignment::*;
 use Cell::*;
 
+use crate::prompts::delay_action;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "farcast";
@@ -328,22 +330,58 @@ fn add_entity(ds: &mut DataStore, principal: &Entity) -> Result<(), DataError> {
     Ok(())
 }
 
+/// Edit the active entity, that is the ones that have
+/// the next_action_date today or in the past
 fn edit_today(ds: &mut DataStore, principal: &Entity) -> Result<(), DataError> {
     let mut items = ds.agenda_until(&utils::today(), 0, 0);
     while !items.is_empty() {
-        let target = match prompts::edit_entities(&items) {
-            Some(t) => t,
+        let mut target = match prompts::edit_entities(&items) {
+            Some(t) => t.to_owned(),
             None => break,
         };
-        // ask if to add an event
-        if Yes == prompts::confirm("do you want to record a note?", No) {
-            add_note(ds, principal, Some(&target))?;
+        // let the user choose what to do
+        let action = prompts::select_opt(
+            "[[ -  - ]]",
+            vec![("Delay", "delay"), ("Advance", "advance")],
+        );
+
+        match action {
+            Some("delay") => {
+                target.next_action_date = delay(ds, principal).unwrap();
+                println!("delayed to {}", utils::human_date(&target.next_action_date))
+            }
+            Some("advance") => {
+                add_note(ds, principal, Some(&target))?;
+            }
+            _ => continue,
         }
-        let target = prompts::edit_entity(ds, target);
+
         ds.update(&target)?;
         items = ds.agenda_until(&utils::today(), 0, 0);
     }
     Ok(())
+}
+
+fn delay(ds: &mut DataStore, author: &Entity) -> Result<NaiveDate, DataError> {
+    // create the event
+    let evt = Event::delay("cli", 1, &[Actor::RecordedBy(author.uid)]);
+    // find the day with least activity numbers in the next 2 weeks
+    let mut target_date = utils::today();
+    let mut min_n_events = 0;
+    for days in 1..15 {
+        let since = utils::today_plus(days);
+        let until = utils::today_plus(days + 1);
+        let n_events = ds.agenda(&since, &until, 0, 1).len();
+        if min_n_events == 0 || n_events < min_n_events {
+            min_n_events = n_events;
+            target_date = since;
+        }
+    }
+    // record the event
+    ds.record(&evt)?;
+    // TODO inject here the control for over delayed stuff?
+    // return the next action date
+    Ok(target_date.to_owned())
 }
 
 fn add_note(
